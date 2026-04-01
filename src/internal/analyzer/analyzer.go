@@ -221,6 +221,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	}
 
 	var toolsUsed []toolRecord
+	var lastContent string // track last LLM text for fallback
 
 	for i := 0; i < a.maxIterations; i++ {
 		a.logger.Debug("sending LLM request",
@@ -229,13 +230,23 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 			"tools", len(availableTools),
 		)
 
+		// On the last iteration, send without tools to force a text response.
+		reqTools := availableTools
+		if i == a.maxIterations-1 {
+			reqTools = nil
+		}
+
 		resp, err := a.llm.Chat(ctx, &domain.ChatRequest{
 			SystemPrompt: systemPrompt,
 			Messages:     messages,
-			Tools:        availableTools,
+			Tools:        reqTools,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("LLM chat (iteration %d): %w", i+1, err)
+		}
+
+		if resp.Content != "" {
+			lastContent = resp.Content
 		}
 
 		if resp.Done || len(resp.ToolCalls) == 0 {
@@ -279,8 +290,11 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 		}
 	}
 
-	// Max iterations reached - return whatever we have.
+	// Max iterations reached — use last LLM content if available.
 	a.logger.Warn("max iterations reached", "max", a.maxIterations)
+	if lastContent != "" {
+		return buildResult(alert, lastContent, toolsUsed, a.nameResolver), nil
+	}
 	return buildResult(alert, "Analysis incomplete: maximum iterations reached", toolsUsed, a.nameResolver), nil
 }
 

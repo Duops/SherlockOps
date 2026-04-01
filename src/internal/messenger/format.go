@@ -8,7 +8,7 @@ import (
 )
 
 // extractTarget picks the most relevant target from labels.
-// Priority: pod > instance > host > container > service > deployment > job.
+// Priority: well-known infra labels first, then any non-meta label as fallback.
 func extractTarget(alert *domain.Alert) (targetType, targetName string) {
 	priorities := []struct{ label, display string }{
 		{"pod", "pod"},
@@ -18,11 +18,37 @@ func extractTarget(alert *domain.Alert) (targetType, targetName string) {
 		{"service", "service"},
 		{"deployment", "deployment"},
 		{"job", "job"},
+		{"queue", "queue"},
+		{"topic", "topic"},
+		{"database", "database"},
+		{"table", "table"},
+		{"vhost", "vhost"},
+		{"namespace", "namespace"},
+		{"node", "node"},
+		{"disk", "disk"},
+		{"device", "device"},
+		{"endpoint", "endpoint"},
+		{"url", "url"},
 	}
 	for _, p := range priorities {
 		if v, ok := alert.Labels[p.label]; ok && v != "" {
 			return p.display, v
 		}
+	}
+	// Fallback: pick first non-meta label alphabetically.
+	meta := map[string]bool{
+		"alertname": true, "severity": true, "alertgroup": true,
+		"prometheus": true, "grafana_folder": true,
+	}
+	var keys []string
+	for k := range alert.Labels {
+		if !meta[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > 0 {
+		return keys[0], alert.Labels[keys[0]]
 	}
 	return "", ""
 }
