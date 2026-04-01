@@ -238,7 +238,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 
 	var toolsUsed []toolRecord
 	var lastContent string // track last LLM text for fallback
-	var totalTokens int
+	var totalTokens, totalInput, totalOutput int
 
 	for i := 0; i < a.maxIterations; i++ {
 		a.logger.Debug("sending LLM request",
@@ -263,6 +263,8 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 		}
 
 		totalTokens += resp.TokensUsed
+		totalInput += resp.InputTokens
+		totalOutput += resp.OutputTokens
 
 		if resp.Content != "" {
 			lastContent = resp.Content
@@ -271,6 +273,8 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 		if resp.Done || len(resp.ToolCalls) == 0 {
 			result := buildResult(alert, resp.Content, toolsUsed, a.nameResolver)
 			result.TotalTokens = totalTokens
+			result.InputTokens = totalInput
+			result.OutputTokens = totalOutput
 			return result, nil
 		}
 
@@ -319,6 +323,8 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	}
 	result := buildResult(alert, text, toolsUsed, a.nameResolver)
 	result.TotalTokens = totalTokens
+	result.InputTokens = totalInput
+	result.OutputTokens = totalOutput
 	return result, nil
 }
 

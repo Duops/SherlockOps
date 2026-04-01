@@ -8,7 +8,9 @@ type AnalysisResult struct {
 	Text             string
 	ToolsUsed        []string         // tool names (for cache compatibility)
 	ToolsTrace       []ToolTraceEntry // detailed trace with success/fail status
-	TotalTokens      int              // total LLM tokens used for this analysis
+	TotalTokens      int              // total LLM tokens used (input + output)
+	InputTokens      int              // total input tokens across all iterations
+	OutputTokens     int              // total output tokens across all iterations
 	CachedAt         time.Time
 	ResolvedAt       *time.Time
 }

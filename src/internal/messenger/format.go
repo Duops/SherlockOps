@@ -124,6 +124,9 @@ func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 		trace := strings.Join(parts, "  ")
 		if result.TotalTokens > 0 {
 			trace += fmt.Sprintf(" | %s tokens", formatTokenCount(result.TotalTokens))
+			if cost := estimateCost(result.InputTokens, result.OutputTokens); cost != "" {
+				trace += " ~" + cost
+			}
 		}
 		return trace
 	}
@@ -144,4 +147,23 @@ func formatTokenCount(tokens int) string {
 		return fmt.Sprintf("%.1fk", float64(tokens)/1000.0)
 	}
 	return fmt.Sprintf("%d", tokens)
+}
+
+// estimateCost returns approximate USD cost string based on Claude Sonnet pricing.
+// Prices per 1M tokens: input=$3, output=$15 (Claude Sonnet 4).
+// Returns empty string if tokens are zero.
+func estimateCost(inputTokens, outputTokens int) string {
+	if inputTokens == 0 && outputTokens == 0 {
+		return ""
+	}
+	const (
+		inputPricePerM  = 3.0  // $/1M input tokens
+		outputPricePerM = 15.0 // $/1M output tokens
+	)
+	cost := float64(inputTokens)/1_000_000*inputPricePerM +
+		float64(outputTokens)/1_000_000*outputPricePerM
+	if cost < 0.001 {
+		return "<$0.001"
+	}
+	return fmt.Sprintf("$%.3f", cost)
 }
