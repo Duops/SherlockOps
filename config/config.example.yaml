@@ -1,0 +1,200 @@
+# SherlockOps Configuration
+# Copy this file to config.yaml and adjust values as needed.
+# Secrets (API keys, tokens) should go in .env file, not here.
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mcp_port: 8081
+
+# ─── LLM Provider ────────────────────────────────────────────
+llm:
+  # "claude", "openai", or "openai-compatible" (Ollama, vLLM, Azure OpenAI)
+  provider: "claude"
+  # API key (prefer env: LLM_API_KEY)
+  api_key: ""
+  # Base URL — only for "openai-compatible" (e.g. http://localhost:11434/v1)
+  base_url: ""
+  model: "claude-sonnet-4-6"
+  max_tokens: 4096
+  # Max tool-calling iterations per analysis (prevents infinite loops)
+  max_iterations: 10
+  # Custom system prompt (empty = use built-in based on language)
+  system_prompt: ""
+  # Language for built-in prompt: "en", "ru"
+  language: "en"
+
+# ─── Messengers ───────────────────────────────────────────────
+messengers:
+  slack:
+    enabled: false
+    # Required for Slack. Posts alerts, replies in threads.
+    bot_token: ""           # env: SLACK_BOT_TOKEN
+    # Optional. Enables listener mode (Socket Mode) — bot watches channels for alerts.
+    # If not set, Slack works in webhook-only mode.
+    app_token: ""           # env: SLACK_APP_TOKEN
+    # Optional. Verifies incoming Slack webhook signatures.
+    signing_secret: ""      # env: SLACK_SIGNING_SECRET
+    # Listener mode: channels to watch (empty = all channels bot is in)
+    listen_channels: []
+    # Webhook mode: default channel to post alerts to
+    default_channel: "#alerts"
+
+  telegram:
+    enabled: false
+    bot_token: ""           # env: TELEGRAM_BOT_TOKEN
+    listen_chats: []        # Chat IDs to listen (empty = all)
+    default_chat: 0         # Default chat ID for posting alerts
+    parse_mode: "HTML"      # "HTML" or "Markdown"
+
+  teams:
+    enabled: false
+    # Simple mode — just an incoming webhook URL:
+    webhook_url: ""         # env: TEAMS_WEBHOOK_URL
+    # Bot Framework mode — for interactive commands:
+    tenant_id: ""
+    client_id: ""           # env: TEAMS_CLIENT_ID
+    client_secret: ""       # env: TEAMS_CLIENT_SECRET
+    default_team: ""
+    default_channel: ""
+    listen_port: 3978    # Bot Framework listener port
+
+# ─── Cache ────────────────────────────────────────────────────
+cache:
+  ttl: "24h"
+  path: "/data/cache.db"
+  min_length: 200       # Don't cache short responses (likely errors)
+
+# ─── Pipeline ─────────────────────────────────────────────────
+pipeline:
+  workers: 5            # Number of async analysis workers
+  queue_size: 1000      # Max alerts in queue before dropping
+  max_concurrent_llm: 3 # Max parallel LLM API calls
+
+# ─── Webhooks ─────────────────────────────────────────────────
+webhooks:
+  path_prefix: "/webhook"
+  # Endpoints: POST /webhook/alertmanager, /webhook/grafana,
+  #            /webhook/zabbix, /webhook/datadog, /webhook/elk,
+  #            /webhook/loki, /webhook/generic
+
+# ─── Runbooks (Knowledge Base) ────────────────────────────────
+runbooks:
+  enabled: false
+  dir: "/data/runbooks"  # Directory with .md files
+
+# ─── Default Tools (used when X-Environment header is not set) ─
+tools:
+  prometheus:
+    enabled: false
+    url: "http://prometheus:9090"
+    username: ""
+    password: ""
+
+  victoriametrics:
+    enabled: false
+    url: "http://victoriametrics:8428"
+    username: ""
+    password: ""
+    tenant: ""           # Cluster version: "0:0" or "accountID:projectID"
+
+  loki:
+    enabled: false
+    url: "http://loki:3100"
+    username: ""
+    password: ""
+
+  kubernetes:
+    enabled: false
+    kubeconfig: ""       # Path to kubeconfig (empty = in-cluster)
+    context: ""          # K8s context (empty = current)
+
+  vsphere:
+    enabled: false
+    url: "https://vcenter.example.com"
+    username: ""
+    password: ""
+    insecure: false      # Skip TLS verification
+
+  aws:
+    enabled: false
+    region: "eu-west-1"
+    access_key: ""
+    secret_key: ""
+
+  gcp:
+    enabled: false
+    project_id: ""
+    credentials_json: "" # Path to SA JSON file
+
+  azure:
+    enabled: false
+    tenant_id: ""
+    client_id: ""
+    client_secret: ""
+    subscription_id: ""
+
+  postgres:
+    enabled: false
+    dsn: ""              # postgres://user:pass@host:5432/db?sslmode=disable
+
+  mongodb:
+    enabled: false
+    uri: ""              # mongodb://user:pass@host:27017/admin
+
+  yandex_cloud:
+    enabled: false
+    cloud_id: ""         # Yandex Cloud ID
+    folder_id: ""        # Default folder ID
+    token: ""            # IAM or OAuth token
+    token_type: "iam"    # "iam" or "oauth"
+
+  digitalocean:
+    enabled: false
+    token: ""            # DigitalOcean API token
+
+# ─── External MCP Servers ─────────────────────────────────────
+mcp:
+  clients: []
+  #  - name: "k8s-mcp"
+  #    url: "https://k8s-mcp.example.com"
+  #    auth: "bearer"     # "bearer", "basic", or ""
+  #    token: ""
+  #    headers:
+  #      X-Custom: "value"
+  bridge:
+    enabled: false
+    port: 8082
+
+# ─── Per-Environment Tool Overrides ───────────────────────────
+# Each environment gets its own tools, MCP servers, and system prompt.
+# Selected via X-Environment HTTP header in webhook requests.
+# If not set, top-level "tools" and "mcp" are used as default.
+#
+# environments:
+#   prod:
+#     tools:
+#       victoriametrics:
+#         enabled: true
+#         url: "https://vmetrics.prod.example.com"
+#       loki:
+#         enabled: true
+#         url: "https://loki.prod.example.com"
+#       kubernetes:
+#         enabled: true
+#         kubeconfig: "/kubeconfigs/prod"
+#     mcp:
+#       clients:
+#         - name: "k8s-prod"
+#           url: "https://k8s-mcp.prod.example.com/mcp"
+#     llm:
+#       system_prompt: ""
+#
+#   dev:
+#     tools:
+#       victoriametrics:
+#         enabled: true
+#         url: "https://vmetrics.dev.example.com"
+#       kubernetes:
+#         enabled: true
+#         kubeconfig: "/kubeconfigs/dev"

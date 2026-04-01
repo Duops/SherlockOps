@@ -1,0 +1,223 @@
+package pipeline
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"github.com/shchepetkov/sherlockops/internal/domain"
+)
+
+// Pipeline orchestrates the alert processing flow: deduplication via cache,
+// LLM analysis, and delivery through messengers.
+type Pipeline struct {
+	cache      domain.Cache
+	analyzer   domain.Analyzer
+	messengers []domain.Messenger
+	logger     *slog.Logger
+}
+
+// New creates a Pipeline with the given dependencies.
+func New(cache domain.Cache, analyzer domain.Analyzer, messengers []domain.Messenger, logger *slog.Logger) *Pipeline {
+	return &Pipeline{
+		cache:      cache,
+		analyzer:   analyzer,
+		messengers: messengers,
+		logger:     logger,
+	}
+}
+
+// Process handles a single alert through the full pipeline.
+// It uses two-phase delivery for webhook-originated alerts (no ReplyTarget):
+//   - Phase 1: Post the raw alert to messengers immediately, get message refs.
+//   - Phase 2: Run AI analysis, then reply in thread (Slack) or edit (TG/Teams).
+//
+// For bot-originated alerts (ReplyTarget already set), the existing single-phase
+// SendAnalysis flow is used.
+func (p *Pipeline) Process(ctx context.Context, alert *domain.Alert) error {
+	// 1. Compute fingerprint if missing.
+	if alert.Fingerprint == "" {
+		alert.Fingerprint = domain.Fingerprint(alert.Name, alert.Labels)
+	}
+
+	p.logger.Info("processing alert",
+		"fingerprint", alert.Fingerprint,
+		"name", alert.Name,
+		"status", alert.Status,
+	)
+
+	// Bot listener mode: alert already has a ReplyTarget, use single-phase flow.
+	if alert.ReplyTarget != nil && alert.ReplyTarget.ThreadID != "" {
+		return p.processSinglePhase(ctx, alert)
+	}
+
+	// Webhook mode: use two-phase delivery.
+	return p.processTwoPhase(ctx, alert)
+}
+
+// processSinglePhase handles alerts from bot listeners (existing flow).
+func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) error {
+	// Resolved alerts: mark in cache and return.
+	if alert.Status == domain.StatusResolved {
+		if err := p.cache.MarkResolved(ctx, alert.Fingerprint, alert.EndsAt); err != nil {
+			return fmt.Errorf("pipeline: mark resolved: %w", err)
+		}
+		p.logger.Info("alert marked resolved", "fingerprint", alert.Fingerprint)
+		return nil
+	}
+
+	// Check cache (unless reanalyze is requested).
+	if alert.UserCommand != "reanalyze" {
+		cached, err := p.cache.Get(ctx, alert.Fingerprint)
+		if err != nil {
+			return fmt.Errorf("pipeline: cache get: %w", err)
+		}
+		if cached != nil {
+			p.logger.Info("cache hit", "fingerprint", alert.Fingerprint)
+			return p.send(ctx, alert, cached)
+		}
+	}
+
+	// Analyze via LLM.
+	result, err := p.analyzer.Analyze(ctx, alert)
+	if err != nil {
+		p.sendError(ctx, alert, err)
+		return fmt.Errorf("pipeline: analyze: %w", err)
+	}
+
+	// Store in cache.
+	if err := p.cache.Set(ctx, result); err != nil {
+		p.logger.Warn("failed to cache result", "error", err)
+	}
+
+	return p.send(ctx, alert, result)
+}
+
+// processTwoPhase handles webhook-originated alerts with two-phase delivery.
+func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) error {
+	// 1. Resolved handling.
+	if alert.Status == domain.StatusResolved {
+		if err := p.cache.MarkResolved(ctx, alert.Fingerprint, alert.EndsAt); err != nil {
+			return fmt.Errorf("pipeline: mark resolved: %w", err)
+		}
+		// Still notify messengers about resolution.
+		targets := p.resolveMessengers(alert)
+		for _, m := range targets {
+			if _, err := m.SendAlert(ctx, alert); err != nil {
+				p.logger.Error("phase 1: send resolved alert failed", "messenger", m.Name(), "error", err)
+			}
+		}
+		p.logger.Info("alert marked resolved", "fingerprint", alert.Fingerprint)
+		return nil
+	}
+
+	// 2. Phase 1: Post alert to all messengers immediately.
+	targets := p.resolveMessengers(alert)
+	var refs []*domain.MessageRef
+	for _, m := range targets {
+		ref, err := m.SendAlert(ctx, alert)
+		if err != nil {
+			p.logger.Error("phase 1: send alert failed", "messenger", m.Name(), "error", err)
+			continue
+		}
+		if ref != nil {
+			refs = append(refs, ref)
+		}
+	}
+
+	// 3. Check cache (skip if reanalyze).
+	if alert.UserCommand != "reanalyze" {
+		cached, err := p.cache.Get(ctx, alert.Fingerprint)
+		if err != nil {
+			return fmt.Errorf("pipeline: cache get: %w", err)
+		}
+		if cached != nil {
+			p.logger.Info("cache hit", "fingerprint", alert.Fingerprint)
+			for _, ref := range refs {
+				m := p.findMessenger(ref.Messenger)
+				if m != nil {
+					if err := m.SendAnalysisReply(ctx, ref, cached); err != nil {
+						p.logger.Error("phase 2: send cached analysis failed", "messenger", m.Name(), "error", err)
+					}
+				}
+			}
+			return nil
+		}
+	}
+
+	// 4. Phase 2: AI analysis.
+	result, err := p.analyzer.Analyze(ctx, alert)
+	if err != nil {
+		for _, ref := range refs {
+			m := p.findMessenger(ref.Messenger)
+			if m != nil {
+				m.SendError(ctx, alert, err)
+			}
+		}
+		return fmt.Errorf("pipeline: analyze: %w", err)
+	}
+
+	// 5. Cache result.
+	if err := p.cache.Set(ctx, result); err != nil {
+		p.logger.Warn("failed to cache result", "error", err)
+	}
+
+	// 6. Send analysis as reply/edit to all refs.
+	for _, ref := range refs {
+		m := p.findMessenger(ref.Messenger)
+		if m != nil {
+			if err := m.SendAnalysisReply(ctx, ref, result); err != nil {
+				p.logger.Error("phase 2: send analysis failed", "messenger", m.Name(), "error", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// send delivers an analysis result to the appropriate messenger(s).
+func (p *Pipeline) send(ctx context.Context, alert *domain.Alert, result *domain.AnalysisResult) error {
+	targets := p.resolveMessengers(alert)
+	if len(targets) == 0 {
+		p.logger.Warn("no messenger found for alert", "fingerprint", alert.Fingerprint)
+		return nil
+	}
+
+	var firstErr error
+	for _, m := range targets {
+		if err := m.SendAnalysis(ctx, alert, result); err != nil {
+			p.logger.Error("send failed", "messenger", m.Name(), "error", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("pipeline: send via %s: %w", m.Name(), err)
+			}
+		}
+	}
+	return firstErr
+}
+
+// sendError notifies messenger(s) about a processing error.
+func (p *Pipeline) sendError(ctx context.Context, alert *domain.Alert, pipeErr error) {
+	for _, m := range p.resolveMessengers(alert) {
+		if err := m.SendError(ctx, alert, pipeErr); err != nil {
+			p.logger.Error("send error failed", "messenger", m.Name(), "error", err)
+		}
+	}
+}
+
+// resolveMessengers returns the messenger matching the alert's ReplyTarget,
+// or all messengers if no specific target is set.
+// resolveMessengers always returns all enabled messengers.
+// ReplyTarget is used by each messenger to pick the right channel, not to filter messengers.
+func (p *Pipeline) resolveMessengers(_ *domain.Alert) []domain.Messenger {
+	return p.messengers
+}
+
+// findMessenger returns the messenger with the given name, or nil if not found.
+func (p *Pipeline) findMessenger(name string) domain.Messenger {
+	for _, m := range p.messengers {
+		if m.Name() == name {
+			return m
+		}
+	}
+	return nil
+}
