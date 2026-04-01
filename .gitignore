@@ -24,8 +24,6 @@ Thumbs.db
 
 # Not part of project
 CLAUDE.md
-landing/
-docs/
 .claude/
 .claude-flow/
 .swarm/
