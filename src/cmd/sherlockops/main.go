@@ -93,6 +93,12 @@ func main() {
 		logger,
 	)
 
+	// Set token pricing from config.
+	if cfg.LLM.InputTokenCost > 0 || cfg.LLM.OutputTokenCost > 0 {
+		envAnalyzer.SetTokenCost(cfg.LLM.InputTokenCost, cfg.LLM.OutputTokenCost)
+		logger.Info("custom token pricing set", "input_per_m", cfg.LLM.InputTokenCost, "output_per_m", cfg.LLM.OutputTokenCost)
+	}
+
 	// Set per-environment system prompts.
 	for envName, envCfg := range cfg.Environments {
 		if envCfg.LLM != nil && envCfg.LLM.SystemPrompt != "" {

@@ -23,6 +23,10 @@ llm:
   system_prompt: ""
   # Language for built-in prompt: "en", "ru"
   language: "en"
+  # Token pricing in $/1M tokens (0 = auto-detect from model name)
+  # Set these for custom/self-hosted models where auto-detect won't work
+  input_token_cost: 0
+  output_token_cost: 0
 
 # ─── Messengers ───────────────────────────────────────────────
 messengers:

@@ -124,7 +124,7 @@ func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 		trace := strings.Join(parts, "  ")
 		if result.TotalTokens > 0 {
 			trace += fmt.Sprintf(" | %s tokens", formatTokenCount(result.TotalTokens))
-			if cost := estimateCost(result.Model, result.InputTokens, result.OutputTokens); cost != "" {
+			if cost := estimateCost(result.Model, result.InputTokens, result.OutputTokens, result.InputTokenCost, result.OutputTokenCost); cost != "" {
 				trace += " ~" + cost
 			}
 		}
@@ -190,18 +190,27 @@ func lookupPricing(model string) (modelPricing, bool) {
 	return bestPricing, true
 }
 
-// estimateCost returns approximate USD cost string based on the model's pricing.
-// Returns empty string if model is unknown or tokens are zero.
-func estimateCost(model string, inputTokens, outputTokens int) string {
+// estimateCost returns approximate USD cost string.
+// Uses config pricing if provided (>0), otherwise falls back to built-in model pricing.
+// Returns empty string if pricing unknown or tokens are zero.
+func estimateCost(model string, inputTokens, outputTokens int, cfgInputCost, cfgOutputCost float64) string {
 	if inputTokens == 0 && outputTokens == 0 {
 		return ""
 	}
-	pricing, ok := lookupPricing(model)
-	if !ok {
-		return ""
+	var inputPrice, outputPrice float64
+	if cfgInputCost > 0 || cfgOutputCost > 0 {
+		inputPrice = cfgInputCost
+		outputPrice = cfgOutputCost
+	} else {
+		pricing, ok := lookupPricing(model)
+		if !ok {
+			return ""
+		}
+		inputPrice = pricing.input
+		outputPrice = pricing.output
 	}
-	cost := float64(inputTokens)/1_000_000*pricing.input +
-		float64(outputTokens)/1_000_000*pricing.output
+	cost := float64(inputTokens)/1_000_000*inputPrice +
+		float64(outputTokens)/1_000_000*outputPrice
 	if cost < 0.001 {
 		return "<$0.001"
 	}

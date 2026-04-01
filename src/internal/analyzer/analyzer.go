@@ -169,6 +169,8 @@ type Analyzer struct {
 	systemPrompt     string
 	language         string
 	maxIterations    int
+	inputTokenCost   float64
+	outputTokenCost  float64
 	nameResolver     ToolNameResolver
 	logger           *slog.Logger
 }
@@ -200,6 +202,12 @@ func New(
 // SetNameResolver sets a function to resolve tool prefixes to display names.
 func (a *Analyzer) SetNameResolver(resolver ToolNameResolver) {
 	a.nameResolver = resolver
+}
+
+// SetTokenCost sets per-token pricing from config for cost estimation.
+func (a *Analyzer) SetTokenCost(inputCost, outputCost float64) {
+	a.inputTokenCost = inputCost
+	a.outputTokenCost = outputCost
 }
 
 // SetRunbookStore attaches a runbook store to the analyzer.
@@ -280,6 +288,8 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 			result.InputTokens = totalInput
 			result.OutputTokens = totalOutput
 			result.Model = model
+			result.InputTokenCost = a.inputTokenCost
+			result.OutputTokenCost = a.outputTokenCost
 			return result, nil
 		}
 
