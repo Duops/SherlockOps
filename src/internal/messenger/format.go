@@ -172,15 +172,22 @@ var knownPricing = map[string]modelPricing{
 	"deepseek":       {input: 0.27, output: 1.10},
 }
 
-// lookupPricing finds pricing by matching model name prefix.
+// lookupPricing finds pricing by longest matching model name prefix.
+// Longest match wins to avoid "gpt-4" matching before "gpt-4o-mini".
 func lookupPricing(model string) (modelPricing, bool) {
 	model = strings.ToLower(model)
+	var bestPrefix string
+	var bestPricing modelPricing
 	for prefix, p := range knownPricing {
-		if strings.HasPrefix(model, prefix) {
-			return p, true
+		if strings.HasPrefix(model, prefix) && len(prefix) > len(bestPrefix) {
+			bestPrefix = prefix
+			bestPricing = p
 		}
 	}
-	return modelPricing{}, false
+	if bestPrefix == "" {
+		return modelPricing{}, false
+	}
+	return bestPricing, true
 }
 
 // estimateCost returns approximate USD cost string based on the model's pricing.
