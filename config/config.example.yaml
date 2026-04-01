@@ -18,7 +18,7 @@ llm:
   model: "claude-sonnet-4-6"
   max_tokens: 4096
   # Max tool-calling iterations per analysis (prevents infinite loops)
-  max_iterations: 10
+  max_iterations: 30
   # Custom system prompt (empty = use built-in based on language)
   system_prompt: ""
   # Language for built-in prompt: "en", "ru"

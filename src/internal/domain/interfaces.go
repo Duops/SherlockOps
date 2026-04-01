@@ -93,9 +93,10 @@ type Message struct {
 
 // ChatResponse is the LLM's reply.
 type ChatResponse struct {
-	Content   string     // final text content
-	ToolCalls []ToolCall // tool calls to execute (empty if done)
-	Done      bool       // true if this is the final response
+	Content     string     // final text content
+	ToolCalls   []ToolCall // tool calls to execute (empty if done)
+	Done        bool       // true if this is the final response
+	TokensUsed  int        // tokens consumed in this response (input + output)
 }
 
 // ToolExecutor executes tool calls.

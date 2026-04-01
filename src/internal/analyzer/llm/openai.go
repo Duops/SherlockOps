@@ -59,7 +59,14 @@ type openaiFunctionCall struct {
 
 type openaiResponse struct {
 	Choices []openaiChoice `json:"choices"`
+	Usage   *openaiUsage   `json:"usage,omitempty"`
 	Error   *openaiError   `json:"error,omitempty"`
+}
+
+type openaiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type openaiChoice struct {
@@ -131,7 +138,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req *domain.ChatRequest) (*do
 		return nil, fmt.Errorf("openai API returned no choices")
 	}
 
-	return parseOpenAIResponse(&apiResp.Choices[0]), nil
+	return parseOpenAIResponse(&apiResp.Choices[0], apiResp.Usage), nil
 }
 
 func convertToOpenAIMessages(systemPrompt string, msgs []domain.Message) []openaiMessage {
@@ -199,7 +206,7 @@ func convertToOpenAITools(tools []domain.Tool) []openaiTool {
 	return result
 }
 
-func parseOpenAIResponse(choice *openaiChoice) *domain.ChatResponse {
+func parseOpenAIResponse(choice *openaiChoice, usage *openaiUsage) *domain.ChatResponse {
 	var toolCalls []domain.ToolCall
 
 	for _, tc := range choice.Message.ToolCalls {
@@ -214,9 +221,15 @@ func parseOpenAIResponse(choice *openaiChoice) *domain.ChatResponse {
 
 	done := choice.FinishReason == "stop"
 
+	var tokens int
+	if usage != nil {
+		tokens = usage.TotalTokens
+	}
+
 	return &domain.ChatResponse{
-		Content:   choice.Message.Content,
-		ToolCalls: toolCalls,
-		Done:      done,
+		Content:    choice.Message.Content,
+		ToolCalls:  toolCalls,
+		Done:       done,
+		TokensUsed: tokens,
 	}
 }
