@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
-	"github.com/shchepetkov/sherlockops/internal/metrics"
+	"github.com/Duops/SherlockOps/internal/domain"
+	"github.com/Duops/SherlockOps/internal/metrics"
 )
 
 // ErrQueueFull is returned by Submit when the worker queue is at capacity.

@@ -1,6 +1,6 @@
 package pipeline
 
-import "github.com/shchepetkov/sherlockops/internal/domain"
+import "github.com/Duops/SherlockOps/internal/domain"
 
 // Fingerprint produces a deterministic, 16-character hex string that uniquely
 // identifies an alert by its name and stable labels.

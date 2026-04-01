@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 func TestLokiReceiver_Source(t *testing.T) {

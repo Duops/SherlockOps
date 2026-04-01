@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // extractTarget picks the most relevant target from labels.

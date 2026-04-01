@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // mockLLM implements domain.LLMProvider for testing.

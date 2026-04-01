@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // Registry aggregates multiple ToolExecutor sources and dispatches

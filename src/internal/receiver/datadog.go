@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 	"github.com/google/uuid"
 )
 

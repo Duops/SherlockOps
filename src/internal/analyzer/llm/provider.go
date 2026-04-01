@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // NewProvider creates an LLMProvider based on the provider name.

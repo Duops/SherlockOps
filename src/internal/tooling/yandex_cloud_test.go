@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 func newTestYCExecutor(t *testing.T, serverURL string) *YandexCloudExecutor {

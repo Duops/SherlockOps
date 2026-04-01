@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // AWSCloudWatchExecutor provides AWS CloudWatch, CloudWatch Logs, and EC2 tools.

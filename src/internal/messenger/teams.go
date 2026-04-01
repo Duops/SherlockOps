@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // TeamsMessenger implements domain.Messenger for Microsoft Teams.

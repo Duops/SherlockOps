@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // testSAKey generates a temporary RSA key and returns service account JSON.

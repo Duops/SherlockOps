@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // VSphereExecutor provides VMware vSphere REST API tools for alert analysis.

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // maxBodySize is the maximum allowed webhook request body size (1 MB).

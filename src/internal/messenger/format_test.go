@@ -3,7 +3,7 @@ package messenger
 import (
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 func TestExtractTarget_Priority(t *testing.T) {

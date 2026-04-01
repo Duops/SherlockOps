@@ -6,7 +6,7 @@ RUN go mod download
 COPY src/ ./
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X github.com/shchepetkov/sherlockops/internal/version.Version=${VERSION}" \
+    -ldflags="-s -w -X github.com/Duops/SherlockOps/internal/version.Version=${VERSION}" \
     -o /sherlockops ./cmd/sherlockops
 
 FROM alpine:3.20

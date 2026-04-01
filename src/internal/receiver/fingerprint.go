@@ -1,7 +1,7 @@
 package receiver
 
 import (
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // generateFingerprint produces a stable fingerprint from alertname and labels.

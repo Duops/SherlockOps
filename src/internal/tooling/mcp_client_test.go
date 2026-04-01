@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // newTestMCPServer creates an httptest server that implements the full MCP Streamable HTTP protocol:

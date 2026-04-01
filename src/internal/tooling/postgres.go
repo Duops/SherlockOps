@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 const pgQueryTimeout = 10 * time.Second

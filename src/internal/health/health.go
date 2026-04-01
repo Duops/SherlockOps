@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
-	"github.com/shchepetkov/sherlockops/internal/version"
+	"github.com/Duops/SherlockOps/internal/domain"
+	"github.com/Duops/SherlockOps/internal/version"
 )
 
 // Checker provides liveness and readiness health check endpoints.

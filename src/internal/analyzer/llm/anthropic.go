@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 const maxRetries = 3

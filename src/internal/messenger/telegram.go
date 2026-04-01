@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // convertSlackToTelegram converts Slack-style formatting (*bold*, _italic_)

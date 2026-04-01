@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // YandexCloudExecutor provides Yandex Cloud tools: Compute, Monitoring, Managed DB, VPC.

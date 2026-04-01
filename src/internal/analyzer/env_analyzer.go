@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/shchepetkov/sherlockops/internal/tooling"
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/tooling"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // EnvAnalyzer selects the correct tool registry and system prompt based on the

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/tooling"
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/tooling"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // envMockTools implements domain.ToolExecutor with a label to identify the environment.

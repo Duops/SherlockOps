@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // healthCheckExecutor is a mock that implements HealthChecker.

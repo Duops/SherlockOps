@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // mockExecutor is a test double for domain.ToolExecutor.

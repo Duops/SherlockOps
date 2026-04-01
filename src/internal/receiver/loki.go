@@ -3,7 +3,7 @@ package receiver
 import (
 	"context"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // LokiReceiver parses Loki ruler alerts. Loki uses Alertmanager format,

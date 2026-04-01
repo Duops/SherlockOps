@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // OpenAIProvider implements domain.LLMProvider using the OpenAI Chat Completions API.

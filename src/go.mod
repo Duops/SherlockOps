@@ -1,4 +1,4 @@
-module github.com/shchepetkov/sherlockops
+module github.com/Duops/SherlockOps
 
 go 1.25.0
 

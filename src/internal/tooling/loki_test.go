@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 func TestNewLokiExecutor(t *testing.T) {

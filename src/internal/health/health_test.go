@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 type stubCache struct {

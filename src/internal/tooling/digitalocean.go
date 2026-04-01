@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shchepetkov/sherlockops/internal/domain"
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 const doBaseURL = "https://api.digitalocean.com/v2"
