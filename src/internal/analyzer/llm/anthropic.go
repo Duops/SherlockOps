@@ -158,7 +158,9 @@ func (p *AnthropicProvider) Chat(ctx context.Context, req *domain.ChatRequest) (
 		return nil, fmt.Errorf("anthropic API error: %s: %s", apiResp.Error.Type, apiResp.Error.Message)
 	}
 
-	return parseAnthropicResponse(&apiResp), nil
+	result := parseAnthropicResponse(&apiResp)
+	result.Model = p.model
+	return result, nil
 }
 
 func convertToAnthropicMessages(msgs []domain.Message) []anthropicMessage {

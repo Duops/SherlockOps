@@ -11,6 +11,7 @@ type AnalysisResult struct {
 	TotalTokens      int              // total LLM tokens used (input + output)
 	InputTokens      int              // total input tokens across all iterations
 	OutputTokens     int              // total output tokens across all iterations
+	Model            string           // LLM model used for cost estimation
 	CachedAt         time.Time
 	ResolvedAt       *time.Time
 }

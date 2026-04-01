@@ -99,6 +99,7 @@ type ChatResponse struct {
 	TokensUsed   int        // total tokens consumed (input + output)
 	InputTokens  int        // input tokens in this response
 	OutputTokens int        // output tokens in this response
+	Model        string     // model name for cost estimation
 }
 
 // ToolExecutor executes tool calls.

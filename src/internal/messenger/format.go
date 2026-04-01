@@ -124,7 +124,7 @@ func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 		trace := strings.Join(parts, "  ")
 		if result.TotalTokens > 0 {
 			trace += fmt.Sprintf(" | %s tokens", formatTokenCount(result.TotalTokens))
-			if cost := estimateCost(result.InputTokens, result.OutputTokens); cost != "" {
+			if cost := estimateCost(result.Model, result.InputTokens, result.OutputTokens); cost != "" {
 				trace += " ~" + cost
 			}
 		}
@@ -149,19 +149,52 @@ func formatTokenCount(tokens int) string {
 	return fmt.Sprintf("%d", tokens)
 }
 
-// estimateCost returns approximate USD cost string based on Claude Sonnet pricing.
-// Prices per 1M tokens: input=$3, output=$15 (Claude Sonnet 4).
-// Returns empty string if tokens are zero.
-func estimateCost(inputTokens, outputTokens int) string {
+// modelPricing holds input/output price per 1M tokens for known models.
+type modelPricing struct {
+	input  float64
+	output float64
+}
+
+// knownPricing maps model name prefixes to their pricing.
+// Prices in USD per 1M tokens (as of 2026).
+var knownPricing = map[string]modelPricing{
+	// Anthropic Claude
+	"claude-opus":    {input: 15.0, output: 75.0},
+	"claude-sonnet":  {input: 3.0, output: 15.0},
+	"claude-haiku":   {input: 0.80, output: 4.0},
+	// OpenAI
+	"gpt-4o":         {input: 2.50, output: 10.0},
+	"gpt-4o-mini":    {input: 0.15, output: 0.60},
+	"gpt-4-turbo":    {input: 10.0, output: 30.0},
+	"gpt-4":          {input: 30.0, output: 60.0},
+	"gpt-3.5":        {input: 0.50, output: 1.50},
+	// DeepSeek
+	"deepseek":       {input: 0.27, output: 1.10},
+}
+
+// lookupPricing finds pricing by matching model name prefix.
+func lookupPricing(model string) (modelPricing, bool) {
+	model = strings.ToLower(model)
+	for prefix, p := range knownPricing {
+		if strings.HasPrefix(model, prefix) {
+			return p, true
+		}
+	}
+	return modelPricing{}, false
+}
+
+// estimateCost returns approximate USD cost string based on the model's pricing.
+// Returns empty string if model is unknown or tokens are zero.
+func estimateCost(model string, inputTokens, outputTokens int) string {
 	if inputTokens == 0 && outputTokens == 0 {
 		return ""
 	}
-	const (
-		inputPricePerM  = 3.0  // $/1M input tokens
-		outputPricePerM = 15.0 // $/1M output tokens
-	)
-	cost := float64(inputTokens)/1_000_000*inputPricePerM +
-		float64(outputTokens)/1_000_000*outputPricePerM
+	pricing, ok := lookupPricing(model)
+	if !ok {
+		return ""
+	}
+	cost := float64(inputTokens)/1_000_000*pricing.input +
+		float64(outputTokens)/1_000_000*pricing.output
 	if cost < 0.001 {
 		return "<$0.001"
 	}

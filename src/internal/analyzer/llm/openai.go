@@ -138,7 +138,9 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req *domain.ChatRequest) (*do
 		return nil, fmt.Errorf("openai API returned no choices")
 	}
 
-	return parseOpenAIResponse(&apiResp.Choices[0], apiResp.Usage), nil
+	result := parseOpenAIResponse(&apiResp.Choices[0], apiResp.Usage)
+	result.Model = p.model
+	return result, nil
 }
 
 func convertToOpenAIMessages(systemPrompt string, msgs []domain.Message) []openaiMessage {

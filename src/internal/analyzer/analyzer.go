@@ -239,6 +239,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	var toolsUsed []toolRecord
 	var lastContent string // track last LLM text for fallback
 	var totalTokens, totalInput, totalOutput int
+	var model string
 
 	for i := 0; i < a.maxIterations; i++ {
 		a.logger.Debug("sending LLM request",
@@ -265,6 +266,9 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 		totalTokens += resp.TokensUsed
 		totalInput += resp.InputTokens
 		totalOutput += resp.OutputTokens
+		if resp.Model != "" {
+			model = resp.Model
+		}
 
 		if resp.Content != "" {
 			lastContent = resp.Content
@@ -275,6 +279,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 			result.TotalTokens = totalTokens
 			result.InputTokens = totalInput
 			result.OutputTokens = totalOutput
+			result.Model = model
 			return result, nil
 		}
 
@@ -325,6 +330,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	result.TotalTokens = totalTokens
 	result.InputTokens = totalInput
 	result.OutputTokens = totalOutput
+	result.Model = model
 	return result, nil
 }
 
