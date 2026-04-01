@@ -288,7 +288,7 @@ func applyDefaults(cfg *Config) {
 	cfg.LLM.Provider = "claude"
 	cfg.LLM.Model = "claude-sonnet-4-6"
 	cfg.LLM.MaxTokens = 4096
-	cfg.LLM.MaxIterations = 20
+	cfg.LLM.MaxIterations = 30
 	cfg.LLM.Language = "en"
 
 	cfg.Messengers.Slack.DefaultChannel = "#alerts"

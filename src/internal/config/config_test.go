@@ -34,8 +34,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("llm.max_tokens = %d, want %d", cfg.LLM.MaxTokens, 4096)
 	}
-	if cfg.LLM.MaxIterations != 20 {
-		t.Errorf("llm.max_iterations = %d, want %d", cfg.LLM.MaxIterations, 20)
+	if cfg.LLM.MaxIterations != 30 {
+		t.Errorf("llm.max_iterations = %d, want %d", cfg.LLM.MaxIterations, 30)
 	}
 	if cfg.LLM.Language != "en" {
 		t.Errorf("llm.language = %q, want %q", cfg.LLM.Language, "en")

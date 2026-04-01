@@ -330,12 +330,7 @@ func (a *Analyzer) buildSystemPrompt() string {
 			prompt = defaultSystemPromptEN
 		}
 	}
-	// Soft limit in prompt = 2/3 of maxIterations (leave room for final text response).
-	softLimit := a.maxIterations * 2 / 3
-	if softLimit < 5 {
-		softLimit = 5
-	}
-	return strings.ReplaceAll(prompt, "{TOOL_CALL_LIMIT}", fmt.Sprintf("%d", softLimit))
+	return strings.ReplaceAll(prompt, "{TOOL_CALL_LIMIT}", fmt.Sprintf("%d", a.maxIterations))
 }
 
 // buildResult constructs the final AnalysisResult with deduplicated tool names.
