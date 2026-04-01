@@ -50,7 +50,13 @@ type anthropicResponse struct {
 	ID         string                   `json:"id"`
 	Content    []anthropicContentBlock   `json:"content"`
 	StopReason string                   `json:"stop_reason"`
+	Usage      *anthropicUsage          `json:"usage,omitempty"`
 	Error      *anthropicError          `json:"error,omitempty"`
+}
+
+type anthropicUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 type anthropicContentBlock struct {
@@ -249,9 +255,15 @@ func parseAnthropicResponse(resp *anthropicResponse) *domain.ChatResponse {
 
 	done := resp.StopReason == "end_turn"
 
+	var tokens int
+	if resp.Usage != nil {
+		tokens = resp.Usage.InputTokens + resp.Usage.OutputTokens
+	}
+
 	return &domain.ChatResponse{
-		Content:   text,
-		ToolCalls: toolCalls,
-		Done:      done,
+		Content:    text,
+		ToolCalls:  toolCalls,
+		Done:       done,
+		TokensUsed: tokens,
 	}
 }

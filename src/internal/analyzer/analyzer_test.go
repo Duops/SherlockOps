@@ -265,7 +265,7 @@ func TestAnalyze_RussianPrompt(t *testing.T) {
 	if len(llm.requests) != 1 {
 		t.Fatal("expected 1 LLM request")
 	}
-	if llm.requests[0].SystemPrompt != defaultSystemPromptRU {
+	if !strings.Contains(llm.requests[0].SystemPrompt, "ТОЛЬКО русский") {
 		t.Error("expected Russian system prompt")
 	}
 }

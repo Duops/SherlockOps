@@ -1,6 +1,7 @@
 package messenger
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -104,20 +105,27 @@ func formatLabelsContext(labels map[string]string, excludeKeys ...string) string
 	return strings.Join(parts, " | ")
 }
 
-// formatToolsTrace builds a compact tools trace line from the list of tool names.
 // formatToolsTraceFromResult builds a compact trace from ToolsTrace entries.
-// Output: "prometheus ✓  k8s ✓  loki ✗"
+// Output: "victoriametrics ✓(3)  kubernetes ✓(2)  loki ✗(1) | 12.4k tokens"
 func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 	if len(result.ToolsTrace) > 0 {
 		var parts []string
 		for _, t := range result.ToolsTrace {
+			mark := "✗"
 			if t.Success {
-				parts = append(parts, t.Name+" ✓")
+				mark = "✓"
+			}
+			if t.CallCount > 0 {
+				parts = append(parts, fmt.Sprintf("%s %s(%d)", t.Name, mark, t.CallCount))
 			} else {
-				parts = append(parts, t.Name+" ✗")
+				parts = append(parts, t.Name+" "+mark)
 			}
 		}
-		return strings.Join(parts, "  ")
+		trace := strings.Join(parts, "  ")
+		if result.TotalTokens > 0 {
+			trace += fmt.Sprintf(" | %s tokens", formatTokenCount(result.TotalTokens))
+		}
+		return trace
 	}
 	// Fallback for cached results without ToolsTrace.
 	if len(result.ToolsUsed) > 0 {
@@ -128,4 +136,12 @@ func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 		return strings.Join(parts, "  ")
 	}
 	return ""
+}
+
+// formatTokenCount formats token count as human-readable string: 1234 → "1.2k", 500 → "500".
+func formatTokenCount(tokens int) string {
+	if tokens >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(tokens)/1000.0)
+	}
+	return fmt.Sprintf("%d", tokens)
 }

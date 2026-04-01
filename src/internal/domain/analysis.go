@@ -8,12 +8,14 @@ type AnalysisResult struct {
 	Text             string
 	ToolsUsed        []string         // tool names (for cache compatibility)
 	ToolsTrace       []ToolTraceEntry // detailed trace with success/fail status
+	TotalTokens      int              // total LLM tokens used for this analysis
 	CachedAt         time.Time
 	ResolvedAt       *time.Time
 }
 
 // ToolTraceEntry records a tool invocation and its outcome.
 type ToolTraceEntry struct {
-	Name    string // e.g., "prometheus_query"
-	Success bool   // true = returned data, false = error/empty
+	Name      string // e.g., "prometheus_query"
+	Success   bool   // true = returned data, false = error/empty
+	CallCount int    // number of calls to this tool category
 }
