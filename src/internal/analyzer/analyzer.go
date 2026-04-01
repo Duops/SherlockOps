@@ -169,6 +169,8 @@ type Analyzer struct {
 	systemPrompt     string
 	language         string
 	maxIterations    int
+	inputTokenCost   float64
+	outputTokenCost  float64
 	nameResolver     ToolNameResolver
 	logger           *slog.Logger
 }
@@ -200,6 +202,12 @@ func New(
 // SetNameResolver sets a function to resolve tool prefixes to display names.
 func (a *Analyzer) SetNameResolver(resolver ToolNameResolver) {
 	a.nameResolver = resolver
+}
+
+// SetTokenCost sets per-token pricing from config for cost estimation.
+func (a *Analyzer) SetTokenCost(inputCost, outputCost float64) {
+	a.inputTokenCost = inputCost
+	a.outputTokenCost = outputCost
 }
 
 // SetRunbookStore attaches a runbook store to the analyzer.
@@ -238,7 +246,8 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 
 	var toolsUsed []toolRecord
 	var lastContent string // track last LLM text for fallback
-	var totalTokens int
+	var totalTokens, totalInput, totalOutput int
+	var model string
 
 	for i := 0; i < a.maxIterations; i++ {
 		a.logger.Debug("sending LLM request",
@@ -263,6 +272,11 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 		}
 
 		totalTokens += resp.TokensUsed
+		totalInput += resp.InputTokens
+		totalOutput += resp.OutputTokens
+		if resp.Model != "" {
+			model = resp.Model
+		}
 
 		if resp.Content != "" {
 			lastContent = resp.Content
@@ -271,6 +285,11 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 		if resp.Done || len(resp.ToolCalls) == 0 {
 			result := buildResult(alert, resp.Content, toolsUsed, a.nameResolver)
 			result.TotalTokens = totalTokens
+			result.InputTokens = totalInput
+			result.OutputTokens = totalOutput
+			result.Model = model
+			result.InputTokenCost = a.inputTokenCost
+			result.OutputTokenCost = a.outputTokenCost
 			return result, nil
 		}
 
@@ -319,6 +338,9 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	}
 	result := buildResult(alert, text, toolsUsed, a.nameResolver)
 	result.TotalTokens = totalTokens
+	result.InputTokens = totalInput
+	result.OutputTokens = totalOutput
+	result.Model = model
 	return result, nil
 }
 

@@ -138,7 +138,9 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req *domain.ChatRequest) (*do
 		return nil, fmt.Errorf("openai API returned no choices")
 	}
 
-	return parseOpenAIResponse(&apiResp.Choices[0], apiResp.Usage), nil
+	result := parseOpenAIResponse(&apiResp.Choices[0], apiResp.Usage)
+	result.Model = p.model
+	return result, nil
 }
 
 func convertToOpenAIMessages(systemPrompt string, msgs []domain.Message) []openaiMessage {
@@ -221,15 +223,19 @@ func parseOpenAIResponse(choice *openaiChoice, usage *openaiUsage) *domain.ChatR
 
 	done := choice.FinishReason == "stop"
 
-	var tokens int
+	var total, input, output int
 	if usage != nil {
-		tokens = usage.TotalTokens
+		input = usage.PromptTokens
+		output = usage.CompletionTokens
+		total = usage.TotalTokens
 	}
 
 	return &domain.ChatResponse{
-		Content:    choice.Message.Content,
-		ToolCalls:  toolCalls,
-		Done:       done,
-		TokensUsed: tokens,
+		Content:      choice.Message.Content,
+		ToolCalls:    toolCalls,
+		Done:         done,
+		TokensUsed:   total,
+		InputTokens:  input,
+		OutputTokens: output,
 	}
 }

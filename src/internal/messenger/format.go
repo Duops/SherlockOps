@@ -124,6 +124,9 @@ func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 		trace := strings.Join(parts, "  ")
 		if result.TotalTokens > 0 {
 			trace += fmt.Sprintf(" | %s tokens", formatTokenCount(result.TotalTokens))
+			if cost := estimateCost(result.Model, result.InputTokens, result.OutputTokens, result.InputTokenCost, result.OutputTokenCost); cost != "" {
+				trace += " ~" + cost
+			}
 		}
 		return trace
 	}
@@ -144,4 +147,72 @@ func formatTokenCount(tokens int) string {
 		return fmt.Sprintf("%.1fk", float64(tokens)/1000.0)
 	}
 	return fmt.Sprintf("%d", tokens)
+}
+
+// modelPricing holds input/output price per 1M tokens for known models.
+type modelPricing struct {
+	input  float64
+	output float64
+}
+
+// knownPricing maps model name prefixes to their pricing.
+// Prices in USD per 1M tokens (as of 2026).
+var knownPricing = map[string]modelPricing{
+	// Anthropic Claude
+	"claude-opus":    {input: 15.0, output: 75.0},
+	"claude-sonnet":  {input: 3.0, output: 15.0},
+	"claude-haiku":   {input: 0.80, output: 4.0},
+	// OpenAI
+	"gpt-4o":         {input: 2.50, output: 10.0},
+	"gpt-4o-mini":    {input: 0.15, output: 0.60},
+	"gpt-4-turbo":    {input: 10.0, output: 30.0},
+	"gpt-4":          {input: 30.0, output: 60.0},
+	"gpt-3.5":        {input: 0.50, output: 1.50},
+	// DeepSeek
+	"deepseek":       {input: 0.27, output: 1.10},
+}
+
+// lookupPricing finds pricing by longest matching model name prefix.
+// Longest match wins to avoid "gpt-4" matching before "gpt-4o-mini".
+func lookupPricing(model string) (modelPricing, bool) {
+	model = strings.ToLower(model)
+	var bestPrefix string
+	var bestPricing modelPricing
+	for prefix, p := range knownPricing {
+		if strings.HasPrefix(model, prefix) && len(prefix) > len(bestPrefix) {
+			bestPrefix = prefix
+			bestPricing = p
+		}
+	}
+	if bestPrefix == "" {
+		return modelPricing{}, false
+	}
+	return bestPricing, true
+}
+
+// estimateCost returns approximate USD cost string.
+// Uses config pricing if provided (>0), otherwise falls back to built-in model pricing.
+// Returns empty string if pricing unknown or tokens are zero.
+func estimateCost(model string, inputTokens, outputTokens int, cfgInputCost, cfgOutputCost float64) string {
+	if inputTokens == 0 && outputTokens == 0 {
+		return ""
+	}
+	var inputPrice, outputPrice float64
+	if cfgInputCost > 0 || cfgOutputCost > 0 {
+		inputPrice = cfgInputCost
+		outputPrice = cfgOutputCost
+	} else {
+		pricing, ok := lookupPricing(model)
+		if !ok {
+			return ""
+		}
+		inputPrice = pricing.input
+		outputPrice = pricing.output
+	}
+	cost := float64(inputTokens)/1_000_000*inputPrice +
+		float64(outputTokens)/1_000_000*outputPrice
+	if cost < 0.001 {
+		return "<$0.001"
+	}
+	return fmt.Sprintf("$%.3f", cost)
 }

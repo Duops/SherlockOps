@@ -14,11 +14,13 @@ type EnvAnalyzer struct {
 	llm           domain.LLMProvider
 	envRegistry   *tooling.EnvRegistry
 	runbooks      domain.RunbookMatcher
-	systemPrompts map[string]string // per-env system prompts
-	defaultPrompt string
-	language      string
-	maxIterations int
-	logger        *slog.Logger
+	systemPrompts   map[string]string // per-env system prompts
+	defaultPrompt   string
+	language        string
+	maxIterations   int
+	inputTokenCost  float64
+	outputTokenCost float64
+	logger          *slog.Logger
 }
 
 // NewEnvAnalyzer creates an environment-aware analyzer.
@@ -48,6 +50,12 @@ func (a *EnvAnalyzer) SetSystemPrompt(env, prompt string) {
 	a.systemPrompts[env] = prompt
 }
 
+// SetTokenCost sets per-token pricing from config.
+func (a *EnvAnalyzer) SetTokenCost(inputCost, outputCost float64) {
+	a.inputTokenCost = inputCost
+	a.outputTokenCost = outputCost
+}
+
 // SetRunbookStore attaches a runbook store that will be passed to inner analyzers.
 func (a *EnvAnalyzer) SetRunbookStore(store domain.RunbookMatcher) {
 	a.runbooks = store
@@ -71,6 +79,7 @@ func (a *EnvAnalyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain
 
 	inner := New(a.llm, reg, prompt, a.language, a.maxIterations, a.logger)
 	inner.SetNameResolver(reg.DisplayName)
+	inner.SetTokenCost(a.inputTokenCost, a.outputTokenCost)
 	if a.runbooks != nil {
 		inner.SetRunbookStore(a.runbooks)
 	}

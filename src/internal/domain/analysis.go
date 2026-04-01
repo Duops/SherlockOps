@@ -8,7 +8,12 @@ type AnalysisResult struct {
 	Text             string
 	ToolsUsed        []string         // tool names (for cache compatibility)
 	ToolsTrace       []ToolTraceEntry // detailed trace with success/fail status
-	TotalTokens      int              // total LLM tokens used for this analysis
+	TotalTokens      int              // total LLM tokens used (input + output)
+	InputTokens      int              // total input tokens across all iterations
+	OutputTokens     int              // total output tokens across all iterations
+	Model            string           // LLM model used for cost estimation
+	InputTokenCost   float64          // $/1M input tokens from config (0 = auto from model)
+	OutputTokenCost  float64          // $/1M output tokens from config (0 = auto from model)
 	CachedAt         time.Time
 	ResolvedAt       *time.Time
 }

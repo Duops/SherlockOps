@@ -158,7 +158,9 @@ func (p *AnthropicProvider) Chat(ctx context.Context, req *domain.ChatRequest) (
 		return nil, fmt.Errorf("anthropic API error: %s: %s", apiResp.Error.Type, apiResp.Error.Message)
 	}
 
-	return parseAnthropicResponse(&apiResp), nil
+	result := parseAnthropicResponse(&apiResp)
+	result.Model = p.model
+	return result, nil
 }
 
 func convertToAnthropicMessages(msgs []domain.Message) []anthropicMessage {
@@ -255,15 +257,19 @@ func parseAnthropicResponse(resp *anthropicResponse) *domain.ChatResponse {
 
 	done := resp.StopReason == "end_turn"
 
-	var tokens int
+	var total, input, output int
 	if resp.Usage != nil {
-		tokens = resp.Usage.InputTokens + resp.Usage.OutputTokens
+		input = resp.Usage.InputTokens
+		output = resp.Usage.OutputTokens
+		total = input + output
 	}
 
 	return &domain.ChatResponse{
-		Content:    text,
-		ToolCalls:  toolCalls,
-		Done:       done,
-		TokensUsed: tokens,
+		Content:      text,
+		ToolCalls:    toolCalls,
+		Done:         done,
+		TokensUsed:   total,
+		InputTokens:  input,
+		OutputTokens: output,
 	}
 }

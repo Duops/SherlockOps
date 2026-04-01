@@ -57,14 +57,16 @@ type ServerConfig struct {
 
 // LLMConfig holds LLM provider settings.
 type LLMConfig struct {
-	Provider      string `yaml:"provider"`
-	APIKey        string `yaml:"api_key"`
-	BaseURL       string `yaml:"base_url"`
-	Model         string `yaml:"model"`
-	MaxTokens     int    `yaml:"max_tokens"`
-	MaxIterations int    `yaml:"max_iterations"`
-	SystemPrompt  string `yaml:"system_prompt"`
-	Language      string `yaml:"language"`
+	Provider         string  `yaml:"provider"`
+	APIKey           string  `yaml:"api_key"`
+	BaseURL          string  `yaml:"base_url"`
+	Model            string  `yaml:"model"`
+	MaxTokens        int     `yaml:"max_tokens"`
+	MaxIterations    int     `yaml:"max_iterations"`
+	SystemPrompt     string  `yaml:"system_prompt"`
+	Language         string  `yaml:"language"`
+	InputTokenCost   float64 `yaml:"input_token_cost"`  // $/1M input tokens (0 = auto-detect from model)
+	OutputTokenCost  float64 `yaml:"output_token_cost"` // $/1M output tokens (0 = auto-detect from model)
 }
 
 // MessengersConfig holds all messenger configurations.
