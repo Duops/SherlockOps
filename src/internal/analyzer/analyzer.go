@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/Duops/SherlockOps/internal/domain"
@@ -383,8 +384,16 @@ func buildResult(alert *domain.Alert, text string, tools []toolRecord, resolver 
 		}
 	}
 
+	// Sort categories for stable trace order.
+	catKeys := make([]string, 0, len(categories))
+	for cat := range categories {
+		catKeys = append(catKeys, cat)
+	}
+	sort.Strings(catKeys)
+
 	var trace []domain.ToolTraceEntry
-	for cat, ci := range categories {
+	for _, cat := range catKeys {
+		ci := categories[cat]
 		displayName := cat
 		if resolver != nil {
 			displayName = resolver(cat)
