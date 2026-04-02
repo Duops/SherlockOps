@@ -68,6 +68,67 @@ var (
 			Help: "Current number of workers actively processing alerts.",
 		},
 	)
+
+	// TokensTotal counts total LLM tokens consumed by type (input, output).
+	TokensTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_tokens_total",
+			Help: "Total LLM tokens consumed by type (input, output).",
+		},
+		[]string{"type"}, // "input", "output"
+	)
+
+	// CostTotal tracks estimated total LLM cost in USD.
+	CostTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "llm_cost_dollars_total",
+			Help: "Estimated total LLM cost in USD.",
+		},
+	)
+
+	// CacheHits counts total cache hits.
+	CacheHits = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "cache_hits_total",
+			Help: "Total number of cache hits.",
+		},
+	)
+
+	// CacheMisses counts total cache misses.
+	CacheMisses = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "cache_misses_total",
+			Help: "Total number of cache misses.",
+		},
+	)
+
+	// AnalysisDurationBySource tracks analysis duration by alert source.
+	AnalysisDurationBySource = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "analysis_duration_by_source_seconds",
+			Help:    "Duration of alert analysis in seconds by source.",
+			Buckets: []float64{1, 2, 5, 10, 20, 30, 60, 120},
+		},
+		[]string{"source"},
+	)
+
+	// AnalysisIterations tracks the number of LLM iterations per analysis.
+	AnalysisIterations = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "analysis_iterations",
+			Help:    "Number of LLM iterations per analysis.",
+			Buckets: []float64{1, 2, 3, 5, 8, 10, 15, 20, 30},
+		},
+	)
+
+	// MessengerDeliveryTotal counts messenger delivery attempts by messenger and status.
+	MessengerDeliveryTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "messenger_delivery_total",
+			Help: "Total messenger delivery attempts by messenger and status.",
+		},
+		[]string{"messenger", "status"}, // status: "success", "error"
+	)
 )
 
 func init() {
@@ -79,6 +140,13 @@ func init() {
 		ToolCallsTotal,
 		QueueDepth,
 		ActiveWorkers,
+		TokensTotal,
+		CostTotal,
+		CacheHits,
+		CacheMisses,
+		AnalysisDurationBySource,
+		AnalysisIterations,
+		MessengerDeliveryTotal,
 	)
 }
 
