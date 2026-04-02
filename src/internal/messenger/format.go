@@ -4,9 +4,44 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Duops/SherlockOps/internal/domain"
 )
+
+// formatCacheBadge returns a cache indicator string if the result is from cache.
+// Returns empty string for fresh analysis.
+func formatCacheBadge(result *domain.AnalysisResult) string {
+	if result.CachedAt.IsZero() {
+		return ""
+	}
+	ago := time.Since(result.CachedAt).Truncate(time.Minute)
+	if ago < time.Minute {
+		return "\U0001F4BE Cached (just now)\n"
+	}
+	return fmt.Sprintf("\U0001F4BE Cached (%s ago)\n", formatDuration(ago))
+}
+
+// formatDuration formats a duration as human-readable: "5m", "2h 30m", "1d 3h".
+func formatDuration(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	if hours < 24 {
+		mins := int(d.Minutes()) % 60
+		if mins == 0 {
+			return fmt.Sprintf("%dh", hours)
+		}
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	days := hours / 24
+	remHours := hours % 24
+	if remHours == 0 {
+		return fmt.Sprintf("%dd", days)
+	}
+	return fmt.Sprintf("%dd %dh", days, remHours)
+}
 
 // extractTarget picks the most relevant target from labels.
 // Priority: well-known infra labels first, then any non-meta label as fallback.
