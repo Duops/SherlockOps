@@ -299,7 +299,11 @@ func formatTelegramAnalysisRich(result *domain.AnalysisResult, parseMode string)
 
 	if parseMode == "HTML" {
 		sb.WriteString(separator)
-		sb.WriteString("\n\U0001F50D <b>SherlockOps Investigation</b>\n\n")
+		sb.WriteString("\n\U0001F50D <b>SherlockOps Investigation</b>\n")
+		if badge := formatCacheBadge(result); badge != "" {
+			sb.WriteString(badge)
+		}
+		sb.WriteString("\n")
 		sb.WriteString(converted)
 		trace := formatToolsTraceFromResult(result)
 		if trace != "" {
@@ -307,7 +311,11 @@ func formatTelegramAnalysisRich(result *domain.AnalysisResult, parseMode string)
 		}
 	} else {
 		sb.WriteString(separator)
-		sb.WriteString("\n\U0001F50D *SherlockOps Investigation*\n\n")
+		sb.WriteString("\n\U0001F50D *SherlockOps Investigation*\n")
+		if badge := formatCacheBadge(result); badge != "" {
+			sb.WriteString(badge)
+		}
+		sb.WriteString("\n")
 		sb.WriteString(converted)
 		trace := formatToolsTraceFromResult(result)
 		if trace != "" {

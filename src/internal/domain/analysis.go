@@ -14,6 +14,7 @@ type AnalysisResult struct {
 	Model            string           // LLM model used for cost estimation
 	InputTokenCost   float64          // $/1M input tokens from config (0 = auto from model)
 	OutputTokenCost  float64          // $/1M output tokens from config (0 = auto from model)
+	Iterations       int              // number of LLM iterations used
 	CachedAt         time.Time
 	ResolvedAt       *time.Time
 }

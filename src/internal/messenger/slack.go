@@ -314,6 +314,9 @@ func formatSlackAnalysis(alert *domain.Alert, result *domain.AnalysisResult) str
 func formatSlackAnalysisRich(result *domain.AnalysisResult) string {
 	var sb strings.Builder
 	sb.WriteString("\U0001F50D *SherlockOps Investigation*\n")
+	if badge := formatCacheBadge(result); badge != "" {
+		sb.WriteString(badge)
+	}
 	sb.WriteString("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n")
 	sb.WriteString(result.Text)
 	sb.WriteString("\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")

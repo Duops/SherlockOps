@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/Duops/SherlockOps/internal/domain"
+	"github.com/Duops/SherlockOps/internal/metrics"
+	"github.com/Duops/SherlockOps/internal/pricing"
 )
 
 // Pipeline orchestrates the alert processing flow: deduplication via cache,
@@ -74,16 +77,24 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 		}
 		if cached != nil {
 			p.logger.Info("cache hit", "fingerprint", alert.Fingerprint)
+			metrics.CacheHits.Inc()
+			metrics.AlertsAnalyzed.WithLabelValues("cached").Inc()
 			return p.send(ctx, alert, cached)
 		}
 	}
+	metrics.CacheMisses.Inc()
 
 	// Analyze via LLM.
+	start := time.Now()
 	result, err := p.analyzer.Analyze(ctx, alert)
 	if err != nil {
+		metrics.AlertsAnalyzed.WithLabelValues("error").Inc()
 		p.sendError(ctx, alert, err)
 		return fmt.Errorf("pipeline: analyze: %w", err)
 	}
+	duration := time.Since(start).Seconds()
+
+	recordAnalysisMetrics(alert, result, duration)
 
 	// Store in cache.
 	if err := p.cache.Set(ctx, result); err != nil {
@@ -133,21 +144,29 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 		}
 		if cached != nil {
 			p.logger.Info("cache hit", "fingerprint", alert.Fingerprint)
+			metrics.CacheHits.Inc()
+			metrics.AlertsAnalyzed.WithLabelValues("cached").Inc()
 			for _, ref := range refs {
 				m := p.findMessenger(ref.Messenger)
 				if m != nil {
 					if err := m.SendAnalysisReply(ctx, ref, cached); err != nil {
 						p.logger.Error("phase 2: send cached analysis failed", "messenger", m.Name(), "error", err)
+						metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
+					} else {
+						metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
 					}
 				}
 			}
 			return nil
 		}
 	}
+	metrics.CacheMisses.Inc()
 
 	// 4. Phase 2: AI analysis.
+	start := time.Now()
 	result, err := p.analyzer.Analyze(ctx, alert)
 	if err != nil {
+		metrics.AlertsAnalyzed.WithLabelValues("error").Inc()
 		for _, ref := range refs {
 			m := p.findMessenger(ref.Messenger)
 			if m != nil {
@@ -156,6 +175,9 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 		}
 		return fmt.Errorf("pipeline: analyze: %w", err)
 	}
+	duration := time.Since(start).Seconds()
+
+	recordAnalysisMetrics(alert, result, duration)
 
 	// 5. Cache result.
 	if err := p.cache.Set(ctx, result); err != nil {
@@ -168,6 +190,9 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 		if m != nil {
 			if err := m.SendAnalysisReply(ctx, ref, result); err != nil {
 				p.logger.Error("phase 2: send analysis failed", "messenger", m.Name(), "error", err)
+				metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
+			} else {
+				metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
 			}
 		}
 	}
@@ -187,9 +212,12 @@ func (p *Pipeline) send(ctx context.Context, alert *domain.Alert, result *domain
 	for _, m := range targets {
 		if err := m.SendAnalysis(ctx, alert, result); err != nil {
 			p.logger.Error("send failed", "messenger", m.Name(), "error", err)
+			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
 			if firstErr == nil {
 				firstErr = fmt.Errorf("pipeline: send via %s: %w", m.Name(), err)
 			}
+		} else {
+			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
 		}
 	}
 	return firstErr
@@ -200,6 +228,9 @@ func (p *Pipeline) sendError(ctx context.Context, alert *domain.Alert, pipeErr e
 	for _, m := range p.resolveMessengers(alert) {
 		if err := m.SendError(ctx, alert, pipeErr); err != nil {
 			p.logger.Error("send error failed", "messenger", m.Name(), "error", err)
+			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
+		} else {
+			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
 		}
 	}
 }
@@ -220,4 +251,15 @@ func (p *Pipeline) findMessenger(name string) domain.Messenger {
 		}
 	}
 	return nil
+}
+
+// recordAnalysisMetrics records Prometheus metrics after a successful analysis.
+func recordAnalysisMetrics(alert *domain.Alert, result *domain.AnalysisResult, duration float64) {
+	metrics.AlertsAnalyzed.WithLabelValues("success").Inc()
+	metrics.TokensTotal.WithLabelValues("input").Add(float64(result.InputTokens))
+	metrics.TokensTotal.WithLabelValues("output").Add(float64(result.OutputTokens))
+	metrics.CostTotal.Add(pricing.EstimateCost(result.Model, result.InputTokens, result.OutputTokens, result.InputTokenCost, result.OutputTokenCost))
+	metrics.AnalysisDuration.Observe(duration)
+	metrics.AnalysisDurationBySource.WithLabelValues(alert.Source).Observe(duration)
+	metrics.AnalysisIterations.Observe(float64(result.Iterations))
 }

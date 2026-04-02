@@ -206,7 +206,7 @@ func TestFormatToolsTraceFromResult(t *testing.T) {
 			result: &domain.AnalysisResult{
 				ToolsUsed: []string{"grafana", "kubectl"},
 			},
-			want: "grafana \u2713  kubectl \u2713",
+			want: "grafana \u2713(1)  kubectl \u2713(1)",
 		},
 		{
 			name:   "empty result",
