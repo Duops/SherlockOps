@@ -342,6 +342,8 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	result.InputTokens = totalInput
 	result.OutputTokens = totalOutput
 	result.Model = model
+	result.InputTokenCost = a.inputTokenCost
+	result.OutputTokenCost = a.outputTokenCost
 	result.Iterations = a.maxIterations
 	return result, nil
 }
