@@ -130,11 +130,27 @@ func formatToolsTraceFromResult(result *domain.AnalysisResult) string {
 		}
 		return trace
 	}
-	// Fallback for cached results without ToolsTrace.
+	// Fallback for cached results without ToolsTrace — group by category.
 	if len(result.ToolsUsed) > 0 {
-		var parts []string
+		catCount := make(map[string]int)
 		for _, t := range result.ToolsUsed {
-			parts = append(parts, t+" ✓")
+			cat := t
+			for i, c := range t {
+				if c == '_' {
+					cat = t[:i]
+					break
+				}
+			}
+			catCount[cat]++
+		}
+		catKeys := make([]string, 0, len(catCount))
+		for cat := range catCount {
+			catKeys = append(catKeys, cat)
+		}
+		sort.Strings(catKeys)
+		var parts []string
+		for _, cat := range catKeys {
+			parts = append(parts, fmt.Sprintf("%s ✓(%d)", cat, catCount[cat]))
 		}
 		return strings.Join(parts, "  ")
 	}
