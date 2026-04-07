@@ -50,6 +50,26 @@ func (p *Pipeline) SetPendingStore(s domain.PendingStore) {
 	p.pending = s
 }
 
+// alertLogger returns a slog logger scoped with identifiers of the given
+// alert so that every log line emitted while processing it can be grepped
+// back to the originating alert. This is the per-alert analogue of the
+// analyzer's own scoped logger and keeps the trace coherent across the
+// pipeline → analyzer → messenger boundary.
+func (p *Pipeline) alertLogger(alert *domain.Alert) *slog.Logger {
+	if alert == nil {
+		return p.logger
+	}
+	log := p.logger.With(
+		"alert_fingerprint", alert.Fingerprint,
+		"alert_name", alert.Name,
+		"alert_source", alert.Source,
+	)
+	if alert.RequestID != "" {
+		log = log.With("request_id", alert.RequestID)
+	}
+	return log
+}
+
 // Process handles a single alert through the full pipeline.
 // It uses two-phase delivery for webhook-originated alerts (no ReplyTarget):
 //   - Phase 1: Post the raw alert to messengers immediately, get message refs.
@@ -63,38 +83,35 @@ func (p *Pipeline) Process(ctx context.Context, alert *domain.Alert) error {
 		alert.Fingerprint = domain.Fingerprint(alert.Name, alert.Labels)
 	}
 
-	p.logger.Info("processing alert",
-		"fingerprint", alert.Fingerprint,
-		"name", alert.Name,
-		"status", alert.Status,
-	)
+	log := p.alertLogger(alert)
+	log.Info("processing alert", "status", alert.Status)
 
 	// Bot listener mode: alert already has a ReplyTarget, use single-phase flow.
 	// (This includes manual-mode "@bot analyze" mentions resolved against pending store.)
 	if alert.ReplyTarget != nil && alert.ReplyTarget.ThreadID != "" {
-		return p.processSinglePhase(ctx, alert)
+		return p.processSinglePhase(ctx, log, alert)
 	}
 
 	// Manual mode: post the raw alert and remember it; do not run LLM analysis.
 	if p.mode == "manual" && p.pending != nil {
-		return p.processManual(ctx, alert)
+		return p.processManual(ctx, log, alert)
 	}
 
 	// Webhook mode: use two-phase delivery.
-	return p.processTwoPhase(ctx, alert)
+	return p.processTwoPhase(ctx, log, alert)
 }
 
 // processManual delivers the raw alert via all messengers and persists it under
 // each posted message ID so that a future "@bot analyze" reply can recover the
 // original alert and trigger analysis on demand.
-func (p *Pipeline) processManual(ctx context.Context, alert *domain.Alert) error {
+func (p *Pipeline) processManual(ctx context.Context, log *slog.Logger, alert *domain.Alert) error {
 	if alert.Status == domain.StatusResolved {
 		if err := p.cache.MarkResolved(ctx, alert.Fingerprint, alert.EndsAt); err != nil {
 			return fmt.Errorf("pipeline: mark resolved: %w", err)
 		}
 		for _, m := range p.resolveMessengers(alert) {
 			if _, err := m.SendAlert(ctx, alert); err != nil {
-				p.logger.Error("manual: send resolved alert failed", "messenger", m.Name(), "error", err)
+				log.Error("manual: send resolved alert failed", "messenger", m.Name(), "error", err)
 			}
 		}
 		return nil
@@ -102,14 +119,14 @@ func (p *Pipeline) processManual(ctx context.Context, alert *domain.Alert) error
 
 	targets := p.resolveMessengers(alert)
 	if len(targets) == 0 {
-		p.logger.Warn("manual: no messengers configured", "fingerprint", alert.Fingerprint)
+		log.Warn("manual: no messengers configured")
 		return nil
 	}
 
 	for _, m := range targets {
 		ref, err := m.SendAlert(ctx, alert)
 		if err != nil {
-			p.logger.Error("manual: send alert failed", "messenger", m.Name(), "error", err)
+			log.Error("manual: send alert failed", "messenger", m.Name(), "error", err)
 			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
 			continue
 		}
@@ -120,19 +137,17 @@ func (p *Pipeline) processManual(ctx context.Context, alert *domain.Alert) error
 			continue
 		}
 		if err := p.pending.SavePending(ctx, ref, alert); err != nil {
-			p.logger.Error("manual: save pending failed",
+			log.Error("manual: save pending failed",
 				"messenger", ref.Messenger,
 				"channel", ref.Channel,
 				"message_id", ref.MessageID,
 				"error", err,
 			)
 		} else {
-			p.logger.Info("manual: pending saved",
+			log.Info("manual: pending saved",
 				"messenger", ref.Messenger,
 				"channel", ref.Channel,
 				"message_id", ref.MessageID,
-				"fingerprint", alert.Fingerprint,
-				"name", alert.Name,
 			)
 		}
 	}
@@ -141,13 +156,13 @@ func (p *Pipeline) processManual(ctx context.Context, alert *domain.Alert) error
 }
 
 // processSinglePhase handles alerts from bot listeners (existing flow).
-func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) error {
+func (p *Pipeline) processSinglePhase(ctx context.Context, log *slog.Logger, alert *domain.Alert) error {
 	// Resolved alerts: mark in cache and return.
 	if alert.Status == domain.StatusResolved {
 		if err := p.cache.MarkResolved(ctx, alert.Fingerprint, alert.EndsAt); err != nil {
 			return fmt.Errorf("pipeline: mark resolved: %w", err)
 		}
-		p.logger.Info("alert marked resolved", "fingerprint", alert.Fingerprint)
+		log.Info("alert marked resolved")
 		return nil
 	}
 
@@ -158,14 +173,12 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 	// fishes for context — see "loki-read OOMKill in a rabbitmq thread"
 	// reports). Fail fast with a clear in-thread message instead.
 	if isSyntheticMention(alert) {
-		p.logger.Info("synthetic mention without pending alert — sending hint, skipping LLM",
-			"fingerprint", alert.Fingerprint,
-			"messenger", func() string {
-				if alert.ReplyTarget != nil {
-					return alert.ReplyTarget.Messenger
-				}
-				return ""
-			}(),
+		msgr := ""
+		if alert.ReplyTarget != nil {
+			msgr = alert.ReplyTarget.Messenger
+		}
+		log.Info("synthetic mention without pending alert — sending hint, skipping LLM",
+			"messenger", msgr,
 		)
 		hint := &domain.AnalysisResult{
 			AlertFingerprint: alert.Fingerprint,
@@ -173,7 +186,7 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 				"Please mention me as a **reply to the original alert message**, " +
 				"not to one of my previous answers.",
 		}
-		return p.send(ctx, alert, hint)
+		return p.send(ctx, log, alert, hint)
 	}
 
 	// Synthetic mention alerts (e.g. "thread-mention" produced by Slack/Teams
@@ -190,10 +203,10 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 			return fmt.Errorf("pipeline: cache get: %w", err)
 		}
 		if cached != nil {
-			p.logger.Info("cache hit", "fingerprint", alert.Fingerprint)
+			log.Info("cache hit")
 			metrics.CacheHits.Inc()
 			metrics.AlertsAnalyzed.WithLabelValues("cached").Inc()
-			return p.send(ctx, alert, cached)
+			return p.send(ctx, log, alert, cached)
 		}
 	}
 	if !skipCache {
@@ -205,7 +218,7 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 	result, err := p.analyzer.Analyze(ctx, alert)
 	if err != nil {
 		metrics.AlertsAnalyzed.WithLabelValues("error").Inc()
-		p.sendError(ctx, alert, err)
+		p.sendError(ctx, log, alert, err)
 		return fmt.Errorf("pipeline: analyze: %w", err)
 	}
 	duration := time.Since(start).Seconds()
@@ -215,11 +228,11 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 	// Store in cache (skip synthetic mentions to avoid cross-thread pollution).
 	if !skipCache {
 		if err := p.cache.Set(ctx, result); err != nil {
-			p.logger.Warn("failed to cache result", "error", err)
+			log.Warn("failed to cache result", "error", err)
 		}
 	}
 
-	return p.send(ctx, alert, result)
+	return p.send(ctx, log, alert, result)
 }
 
 // isSyntheticMention reports whether the alert was synthesized by a messenger
@@ -240,7 +253,7 @@ func isSyntheticMention(alert *domain.Alert) bool {
 }
 
 // processTwoPhase handles webhook-originated alerts with two-phase delivery.
-func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) error {
+func (p *Pipeline) processTwoPhase(ctx context.Context, log *slog.Logger, alert *domain.Alert) error {
 	// 1. Resolved handling.
 	if alert.Status == domain.StatusResolved {
 		if err := p.cache.MarkResolved(ctx, alert.Fingerprint, alert.EndsAt); err != nil {
@@ -250,10 +263,10 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 		targets := p.resolveMessengers(alert)
 		for _, m := range targets {
 			if _, err := m.SendAlert(ctx, alert); err != nil {
-				p.logger.Error("phase 1: send resolved alert failed", "messenger", m.Name(), "error", err)
+				log.Error("phase 1: send resolved alert failed", "messenger", m.Name(), "error", err)
 			}
 		}
-		p.logger.Info("alert marked resolved", "fingerprint", alert.Fingerprint)
+		log.Info("alert marked resolved")
 		return nil
 	}
 
@@ -263,7 +276,7 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 	for _, m := range targets {
 		ref, err := m.SendAlert(ctx, alert)
 		if err != nil {
-			p.logger.Error("phase 1: send alert failed", "messenger", m.Name(), "error", err)
+			log.Error("phase 1: send alert failed", "messenger", m.Name(), "error", err)
 			continue
 		}
 		if ref != nil {
@@ -282,7 +295,7 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 				continue
 			}
 			if err := p.pending.SavePending(ctx, ref, alert); err != nil {
-				p.logger.Warn("phase 1: save pending failed",
+				log.Warn("phase 1: save pending failed",
 					"messenger", ref.Messenger,
 					"channel", ref.Channel,
 					"message_id", ref.MessageID,
@@ -299,14 +312,14 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 			return fmt.Errorf("pipeline: cache get: %w", err)
 		}
 		if cached != nil {
-			p.logger.Info("cache hit", "fingerprint", alert.Fingerprint)
+			log.Info("cache hit")
 			metrics.CacheHits.Inc()
 			metrics.AlertsAnalyzed.WithLabelValues("cached").Inc()
 			for _, ref := range refs {
 				m := p.findMessenger(ref.Messenger)
 				if m != nil {
 					if err := m.SendAnalysisReply(ctx, ref, cached); err != nil {
-						p.logger.Error("phase 2: send cached analysis failed", "messenger", m.Name(), "error", err)
+						log.Error("phase 2: send cached analysis failed", "messenger", m.Name(), "error", err)
 						metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
 					} else {
 						metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
@@ -337,7 +350,7 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 
 	// 5. Cache result.
 	if err := p.cache.Set(ctx, result); err != nil {
-		p.logger.Warn("failed to cache result", "error", err)
+		log.Warn("failed to cache result", "error", err)
 	}
 
 	// 6. Send analysis as reply/edit to all refs.
@@ -345,7 +358,7 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 		m := p.findMessenger(ref.Messenger)
 		if m != nil {
 			if err := m.SendAnalysisReply(ctx, ref, result); err != nil {
-				p.logger.Error("phase 2: send analysis failed", "messenger", m.Name(), "error", err)
+				log.Error("phase 2: send analysis failed", "messenger", m.Name(), "error", err)
 				metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
 			} else {
 				metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
@@ -357,17 +370,17 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 }
 
 // send delivers an analysis result to the appropriate messenger(s).
-func (p *Pipeline) send(ctx context.Context, alert *domain.Alert, result *domain.AnalysisResult) error {
+func (p *Pipeline) send(ctx context.Context, log *slog.Logger, alert *domain.Alert, result *domain.AnalysisResult) error {
 	targets := p.resolveMessengers(alert)
 	if len(targets) == 0 {
-		p.logger.Warn("no messenger found for alert", "fingerprint", alert.Fingerprint)
+		log.Warn("no messenger found for alert")
 		return nil
 	}
 
 	var firstErr error
 	for _, m := range targets {
 		if err := m.SendAnalysis(ctx, alert, result); err != nil {
-			p.logger.Error("send failed", "messenger", m.Name(), "error", err)
+			log.Error("send failed", "messenger", m.Name(), "error", err)
 			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
 			if firstErr == nil {
 				firstErr = fmt.Errorf("pipeline: send via %s: %w", m.Name(), err)
@@ -380,10 +393,10 @@ func (p *Pipeline) send(ctx context.Context, alert *domain.Alert, result *domain
 }
 
 // sendError notifies messenger(s) about a processing error.
-func (p *Pipeline) sendError(ctx context.Context, alert *domain.Alert, pipeErr error) {
+func (p *Pipeline) sendError(ctx context.Context, log *slog.Logger, alert *domain.Alert, pipeErr error) {
 	for _, m := range p.resolveMessengers(alert) {
 		if err := m.SendError(ctx, alert, pipeErr); err != nil {
-			p.logger.Error("send error failed", "messenger", m.Name(), "error", err)
+			log.Error("send error failed", "messenger", m.Name(), "error", err)
 			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
 		} else {
 			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
