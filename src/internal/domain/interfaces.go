@@ -47,6 +47,18 @@ type Cache interface {
 	Close() error
 }
 
+// PendingStore persists raw alerts in manual mode so that a later
+// "@bot analyze" mention (which references the messenger message ID)
+// can recover the original alert and run analysis on it.
+type PendingStore interface {
+	// SavePending stores the alert under the messenger/channel/message_id key.
+	SavePending(ctx context.Context, ref *MessageRef, alert *Alert) error
+	// GetPending returns the stored alert for the given key, or nil if absent.
+	GetPending(ctx context.Context, messenger, channel, messageID string) (*Alert, error)
+	// DeletePending removes the entry. Optional cleanup; safe to ignore errors.
+	DeletePending(ctx context.Context, messenger, channel, messageID string) error
+}
+
 // CacheStats holds aggregate statistics about the cache.
 type CacheStats struct {
 	TotalCount    int     `json:"total_count"`

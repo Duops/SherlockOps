@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -172,8 +173,11 @@ func main() {
 
 	// 6. Pipeline and worker pool.
 	pipe := pipeline.New(sqliteCache, rateLimitedAnalyzer, messengers, logger)
+	pipe.SetMode(cfg.Pipeline.Mode)
+	pipe.SetPendingStore(sqliteCache)
 	workerPool := pipeline.NewWorkerPool(pipe, cfg.Pipeline.Workers, cfg.Pipeline.QueueSize, logger)
 	workerPool.Start(ctx)
+	logger.Info("pipeline configured", "mode", cfg.Pipeline.Mode)
 
 	// 7. Receivers.
 	receivers := []domain.Receiver{
@@ -241,6 +245,34 @@ func main() {
 				)
 			}
 		}()
+
+		// Manual-mode @bot mention: if the user replies to an alert message
+		// with text containing "analyze", recover the original alert from the
+		// pending store and run normal analysis on it. The synthetic mention
+		// alert is discarded; ReplyTarget is preserved so the answer threads
+		// back to the right place.
+		if alert.ReplyTarget != nil && alert.ReplyTarget.ThreadID != "" && isAnalyzeCommand(alert.UserCommand) {
+			lookupCtx, cancelLookup := context.WithTimeout(ctx, 3*time.Second)
+			pending, err := sqliteCache.GetPending(lookupCtx, alert.ReplyTarget.Messenger, alert.ReplyTarget.Channel, alert.ReplyTarget.ThreadID)
+			cancelLookup()
+			if err != nil {
+				logger.Warn("pending lookup failed",
+					"messenger", alert.ReplyTarget.Messenger,
+					"channel", alert.ReplyTarget.Channel,
+					"message_id", alert.ReplyTarget.ThreadID,
+					"error", err,
+				)
+			} else if pending != nil {
+				logger.Info("manual mode: resolved pending alert from mention",
+					"fingerprint", pending.Fingerprint,
+					"messenger", alert.ReplyTarget.Messenger,
+				)
+				pending.ReplyTarget = alert.ReplyTarget
+				pending.RequestID = alert.RequestID
+				pending.UserCommand = "reanalyze"
+				alert = pending
+			}
+		}
 
 		metrics.AlertsReceived.WithLabelValues(alert.Source).Inc()
 		if err := workerPool.Submit(alert); err != nil {
@@ -424,4 +456,24 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 	}
 
 	return registry
+}
+
+// isAnalyzeCommand reports whether the user's mention text contains an
+// "analyze" instruction. The check is case-insensitive and matches both
+// English and Russian forms ("analyze", "анализ", "проанализируй").
+func isAnalyzeCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+	c := strings.ToLower(strings.TrimSpace(cmd))
+	if c == "" {
+		return false
+	}
+	keywords := []string{"analyze", "analyse", "анализ", "проанализируй", "разбер"}
+	for _, k := range keywords {
+		if strings.Contains(c, k) {
+			return true
+		}
+	}
+	return false
 }

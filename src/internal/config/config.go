@@ -43,10 +43,20 @@ type RunbookConfig struct {
 
 // PipelineConfig holds worker pool and concurrency settings.
 type PipelineConfig struct {
-	Workers        int `yaml:"workers"`
-	QueueSize      int `yaml:"queue_size"`
-	MaxConcurrentLLM int `yaml:"max_concurrent_llm"`
+	// Mode controls how incoming alerts are processed:
+	//   "auto"   — analyze every alert immediately (default)
+	//   "manual" — post the raw alert and wait for "@bot analyze" mention
+	Mode             string `yaml:"mode"`
+	Workers          int    `yaml:"workers"`
+	QueueSize        int    `yaml:"queue_size"`
+	MaxConcurrentLLM int    `yaml:"max_concurrent_llm"`
 }
+
+// PipelineMode constants.
+const (
+	PipelineModeAuto   = "auto"
+	PipelineModeManual = "manual"
+)
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
@@ -304,6 +314,7 @@ func applyDefaults(cfg *Config) {
 
 	cfg.MCP.Bridge.Port = 8082
 
+	cfg.Pipeline.Mode = PipelineModeAuto
 	cfg.Pipeline.Workers = 5
 	cfg.Pipeline.QueueSize = 1000
 	cfg.Pipeline.MaxConcurrentLLM = 3
@@ -372,6 +383,13 @@ func (c *Config) Validate() error {
 	}
 	if c.LLM.MaxIterations < 1 {
 		errs = append(errs, "llm.max_iterations must be positive")
+	}
+
+	switch c.Pipeline.Mode {
+	case "", PipelineModeAuto, PipelineModeManual:
+		// ok
+	default:
+		errs = append(errs, fmt.Sprintf("pipeline.mode must be one of: auto, manual; got %q", c.Pipeline.Mode))
 	}
 
 	if _, err := time.ParseDuration(c.Cache.TTL); err != nil {

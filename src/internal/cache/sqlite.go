@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,16 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 	if _, err := db.Exec(createSQL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cache: create table: %w", err)
+	}
+
+	pendingSQL := `CREATE TABLE IF NOT EXISTS pending_alerts (
+		key        TEXT PRIMARY KEY,
+		alert_json TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`
+	if _, err := db.Exec(pendingSQL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cache: create pending table: %w", err)
 	}
 
 	return &SQLiteCache{
@@ -240,4 +251,68 @@ func (c *SQLiteCache) Stats(ctx context.Context) (*domain.CacheStats, error) {
 // Close releases the database connection.
 func (c *SQLiteCache) Close() error {
 	return c.db.Close()
+}
+
+// pendingKey builds the storage key for a pending alert.
+func pendingKey(messenger, channel, messageID string) string {
+	return messenger + "\x1f" + channel + "\x1f" + messageID
+}
+
+// SavePending stores the raw alert under (messenger, channel, message_id) so that
+// a later @bot mention referencing this message can recover it.
+func (c *SQLiteCache) SavePending(ctx context.Context, ref *domain.MessageRef, alert *domain.Alert) error {
+	if ref == nil || alert == nil {
+		return fmt.Errorf("cache: SavePending: nil ref or alert")
+	}
+	data, err := json.Marshal(alert)
+	if err != nil {
+		return fmt.Errorf("cache: SavePending marshal: %w", err)
+	}
+	key := pendingKey(ref.Messenger, ref.Channel, ref.MessageID)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = c.db.ExecContext(ctx,
+		`INSERT INTO pending_alerts (key, alert_json, created_at)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET
+		   alert_json = excluded.alert_json,
+		   created_at = excluded.created_at`,
+		key, string(data), now,
+	)
+	if err != nil {
+		return fmt.Errorf("cache: SavePending: %w", err)
+	}
+	return nil
+}
+
+// GetPending returns the alert previously stored for this messenger/channel/message_id,
+// or (nil, nil) if absent.
+func (c *SQLiteCache) GetPending(ctx context.Context, messenger, channel, messageID string) (*domain.Alert, error) {
+	row := c.db.QueryRowContext(ctx,
+		"SELECT alert_json FROM pending_alerts WHERE key = ?",
+		pendingKey(messenger, channel, messageID),
+	)
+	var data string
+	if err := row.Scan(&data); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cache: GetPending: %w", err)
+	}
+	var alert domain.Alert
+	if err := json.Unmarshal([]byte(data), &alert); err != nil {
+		return nil, fmt.Errorf("cache: GetPending unmarshal: %w", err)
+	}
+	return &alert, nil
+}
+
+// DeletePending removes the entry for this messenger/channel/message_id.
+func (c *SQLiteCache) DeletePending(ctx context.Context, messenger, channel, messageID string) error {
+	_, err := c.db.ExecContext(ctx,
+		"DELETE FROM pending_alerts WHERE key = ?",
+		pendingKey(messenger, channel, messageID),
+	)
+	if err != nil {
+		return fmt.Errorf("cache: DeletePending: %w", err)
+	}
+	return nil
 }

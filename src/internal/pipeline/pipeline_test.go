@@ -158,7 +158,105 @@ func baseBotAlert() *domain.Alert {
 	}
 }
 
+// mockPendingStore is an in-memory PendingStore for tests.
+type mockPendingStore struct {
+	saved   map[string]*domain.Alert
+	saveErr error
+}
+
+func newMockPendingStore() *mockPendingStore {
+	return &mockPendingStore{saved: make(map[string]*domain.Alert)}
+}
+
+func pendingTestKey(messenger, channel, messageID string) string {
+	return messenger + "|" + channel + "|" + messageID
+}
+
+func (m *mockPendingStore) SavePending(_ context.Context, ref *domain.MessageRef, a *domain.Alert) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+	m.saved[pendingTestKey(ref.Messenger, ref.Channel, ref.MessageID)] = a
+	return nil
+}
+
+func (m *mockPendingStore) GetPending(_ context.Context, messenger, channel, messageID string) (*domain.Alert, error) {
+	return m.saved[pendingTestKey(messenger, channel, messageID)], nil
+}
+
+func (m *mockPendingStore) DeletePending(_ context.Context, messenger, channel, messageID string) error {
+	delete(m.saved, pendingTestKey(messenger, channel, messageID))
+	return nil
+}
+
+// webhookAlert returns a webhook-originated alert (no ReplyTarget at all).
+func webhookAlert() *domain.Alert {
+	return &domain.Alert{
+		Name:        "HighCPU",
+		Status:      domain.StatusFiring,
+		Labels:      map[string]string{"namespace": "prod"},
+		Fingerprint: "manual-fp-001",
+	}
+}
+
 // --- tests ---
+
+// --- Manual mode tests ---
+
+func TestProcess_Manual_PostsAndPersistsPending(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "should not be called"}}
+	m := &mockMessenger{name: "slack"}
+	pending := newMockPendingStore()
+
+	p := New(cache, analyzer, []domain.Messenger{m}, testLogger())
+	p.SetMode("manual")
+	p.SetPendingStore(pending)
+
+	if err := p.Process(context.Background(), webhookAlert()); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if analyzer.called != 0 {
+		t.Errorf("manual mode should not call analyzer; got called=%d", analyzer.called)
+	}
+	if got := len(m.alertsSent); got != 1 {
+		t.Fatalf("expected 1 raw alert sent, got %d", got)
+	}
+	if got := len(m.sent); got != 0 {
+		t.Errorf("manual mode should not call SendAnalysis; got %d", got)
+	}
+	if got := len(pending.saved); got != 1 {
+		t.Fatalf("expected 1 pending entry, got %d", got)
+	}
+	if _, ok := pending.saved[pendingTestKey("slack", "test-channel", "test-msg-id")]; !ok {
+		t.Errorf("pending entry not stored under expected key; have %v", pending.saved)
+	}
+}
+
+func TestProcess_Manual_ResolvedSkipsPersist(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "x"}}
+	m := &mockMessenger{name: "slack"}
+	pending := newMockPendingStore()
+
+	p := New(cache, analyzer, []domain.Messenger{m}, testLogger())
+	p.SetMode("manual")
+	p.SetPendingStore(pending)
+
+	a := webhookAlert()
+	a.Status = domain.StatusResolved
+	if err := p.Process(context.Background(), a); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if _, ok := cache.resolved[a.Fingerprint]; !ok {
+		t.Errorf("resolved alert not marked in cache")
+	}
+	if len(pending.saved) != 0 {
+		t.Errorf("resolved alert should not create pending entries; got %d", len(pending.saved))
+	}
+}
 
 // --- Two-phase flow tests (webhook-originated alerts, no ThreadID) ---
 

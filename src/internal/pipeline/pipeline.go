@@ -18,16 +18,36 @@ type Pipeline struct {
 	analyzer   domain.Analyzer
 	messengers []domain.Messenger
 	logger     *slog.Logger
+
+	// manual-mode dependencies (optional; nil in auto mode)
+	pending domain.PendingStore
+	mode    string
 }
 
-// New creates a Pipeline with the given dependencies.
+// New creates a Pipeline in auto mode.
 func New(cache domain.Cache, analyzer domain.Analyzer, messengers []domain.Messenger, logger *slog.Logger) *Pipeline {
 	return &Pipeline{
 		cache:      cache,
 		analyzer:   analyzer,
 		messengers: messengers,
 		logger:     logger,
+		mode:       "auto",
 	}
+}
+
+// SetMode switches the pipeline between "auto" and "manual" processing.
+// In "manual" mode the pipeline must also have a PendingStore configured
+// via SetPendingStore.
+func (p *Pipeline) SetMode(mode string) {
+	if mode == "" {
+		mode = "auto"
+	}
+	p.mode = mode
+}
+
+// SetPendingStore wires the store used to persist raw alerts in manual mode.
+func (p *Pipeline) SetPendingStore(s domain.PendingStore) {
+	p.pending = s
 }
 
 // Process handles a single alert through the full pipeline.
@@ -50,12 +70,66 @@ func (p *Pipeline) Process(ctx context.Context, alert *domain.Alert) error {
 	)
 
 	// Bot listener mode: alert already has a ReplyTarget, use single-phase flow.
+	// (This includes manual-mode "@bot analyze" mentions resolved against pending store.)
 	if alert.ReplyTarget != nil && alert.ReplyTarget.ThreadID != "" {
 		return p.processSinglePhase(ctx, alert)
 	}
 
+	// Manual mode: post the raw alert and remember it; do not run LLM analysis.
+	if p.mode == "manual" && p.pending != nil {
+		return p.processManual(ctx, alert)
+	}
+
 	// Webhook mode: use two-phase delivery.
 	return p.processTwoPhase(ctx, alert)
+}
+
+// processManual delivers the raw alert via all messengers and persists it under
+// each posted message ID so that a future "@bot analyze" reply can recover the
+// original alert and trigger analysis on demand.
+func (p *Pipeline) processManual(ctx context.Context, alert *domain.Alert) error {
+	if alert.Status == domain.StatusResolved {
+		if err := p.cache.MarkResolved(ctx, alert.Fingerprint, alert.EndsAt); err != nil {
+			return fmt.Errorf("pipeline: mark resolved: %w", err)
+		}
+		for _, m := range p.resolveMessengers(alert) {
+			if _, err := m.SendAlert(ctx, alert); err != nil {
+				p.logger.Error("manual: send resolved alert failed", "messenger", m.Name(), "error", err)
+			}
+		}
+		return nil
+	}
+
+	targets := p.resolveMessengers(alert)
+	if len(targets) == 0 {
+		p.logger.Warn("manual: no messengers configured", "fingerprint", alert.Fingerprint)
+		return nil
+	}
+
+	for _, m := range targets {
+		ref, err := m.SendAlert(ctx, alert)
+		if err != nil {
+			p.logger.Error("manual: send alert failed", "messenger", m.Name(), "error", err)
+			metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "error").Inc()
+			continue
+		}
+		metrics.MessengerDeliveryTotal.WithLabelValues(m.Name(), "success").Inc()
+		if ref == nil || ref.MessageID == "" {
+			// Messenger that does not return a ref (e.g. simple webhook) cannot
+			// be used to anchor a manual mention; skip persistence.
+			continue
+		}
+		if err := p.pending.SavePending(ctx, ref, alert); err != nil {
+			p.logger.Error("manual: save pending failed",
+				"messenger", ref.Messenger,
+				"channel", ref.Channel,
+				"message_id", ref.MessageID,
+				"error", err,
+			)
+		}
+	}
+	metrics.AlertsAnalyzed.WithLabelValues("manual_pending").Inc()
+	return nil
 }
 
 // processSinglePhase handles alerts from bot listeners (existing flow).

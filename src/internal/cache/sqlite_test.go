@@ -428,3 +428,71 @@ func TestDoubleClose(t *testing.T) {
 	// Second close: should not panic, may or may not return error.
 	_ = c.Close()
 }
+
+func TestPendingStore_RoundTrip(t *testing.T) {
+	c, err := New(tempDB(t), time.Hour, 5)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+	ref := &domain.MessageRef{
+		Messenger: "telegram",
+		Channel:   "-1001",
+		MessageID: "42",
+	}
+	original := &domain.Alert{
+		Name:        "HighCPU",
+		Status:      domain.StatusFiring,
+		Fingerprint: "fp-pending-1",
+		Labels:      map[string]string{"namespace": "prod", "service": "api"},
+		RawText:     "raw alert payload",
+	}
+
+	if err := c.SavePending(ctx, ref, original); err != nil {
+		t.Fatalf("SavePending: %v", err)
+	}
+
+	got, err := c.GetPending(ctx, ref.Messenger, ref.Channel, ref.MessageID)
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected stored alert, got nil")
+	}
+	if got.Fingerprint != original.Fingerprint || got.Name != original.Name {
+		t.Errorf("alert mismatch: got %+v want %+v", got, original)
+	}
+	if got.Labels["service"] != "api" {
+		t.Errorf("labels not preserved: got %v", got.Labels)
+	}
+
+	// Upsert with new payload.
+	original.RawText = "updated payload"
+	if err := c.SavePending(ctx, ref, original); err != nil {
+		t.Fatalf("SavePending upsert: %v", err)
+	}
+	got, _ = c.GetPending(ctx, ref.Messenger, ref.Channel, ref.MessageID)
+	if got.RawText != "updated payload" {
+		t.Errorf("upsert did not overwrite: got %q", got.RawText)
+	}
+
+	// Delete.
+	if err := c.DeletePending(ctx, ref.Messenger, ref.Channel, ref.MessageID); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+	got, _ = c.GetPending(ctx, ref.Messenger, ref.Channel, ref.MessageID)
+	if got != nil {
+		t.Errorf("expected nil after delete, got %+v", got)
+	}
+
+	// Missing key returns (nil, nil).
+	got, err = c.GetPending(ctx, "slack", "missing", "missing")
+	if err != nil {
+		t.Errorf("GetPending missing should not error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for missing key, got %+v", got)
+	}
+}
