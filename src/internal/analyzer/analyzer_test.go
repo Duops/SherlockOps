@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -316,5 +317,94 @@ func TestAnalyze_UserCommand(t *testing.T) {
 	}
 	if !strings.Contains(userMsg.Content, "check memory too") {
 		t.Errorf("expected user command in user content, got %q", userMsg.Content)
+	}
+}
+
+// --- Context compaction / tool-output cap ---
+
+func TestCapToolContent(t *testing.T) {
+	full := &domain.ToolResult{CallID: "c1", Content: strings.Repeat("x", 500)}
+
+	// max=0 → passthrough
+	if got := capToolContent(full, 0); got != full {
+		t.Errorf("max=0 should passthrough")
+	}
+	// content under cap → passthrough
+	if got := capToolContent(full, 1000); got != full {
+		t.Errorf("under cap should passthrough")
+	}
+	// over cap → truncated with marker
+	got := capToolContent(full, 100)
+	if got == full {
+		t.Fatal("over cap should return new ToolResult")
+	}
+	if !strings.Contains(got.Content, "truncated 400 of 500 chars") {
+		t.Errorf("expected truncation marker, got %q", got.Content)
+	}
+	if got.CallID != "c1" {
+		t.Errorf("CallID not preserved")
+	}
+	// nil → nil
+	if got := capToolContent(nil, 100); got != nil {
+		t.Errorf("nil input should return nil")
+	}
+}
+
+func TestCompactToolHistory(t *testing.T) {
+	msg := func(i int, content string) domain.Message {
+		return domain.Message{
+			Role: "tool",
+			ToolResult: &domain.ToolResult{
+				CallID:  fmt.Sprintf("c%d", i),
+				Content: content,
+			},
+		}
+	}
+	bigPayload := strings.Repeat("a", 500)
+
+	messages := []domain.Message{
+		{Role: "user", Content: "analyze"},
+		msg(1, bigPayload),
+		{Role: "assistant", Content: "thinking"},
+		msg(2, bigPayload),
+		msg(3, bigPayload),
+		msg(4, bigPayload),
+		msg(5, bigPayload),
+	}
+
+	// keep=3 → messages 1 and 2 should be compacted, 3/4/5 stay full.
+	n := compactToolHistory(messages, 3)
+	if n != 2 {
+		t.Errorf("expected 2 compactions, got %d", n)
+	}
+
+	// message[1] and message[3] (= msg 1 and msg 2) should now be compacted
+	if !strings.HasPrefix(messages[1].ToolResult.Content, compactedMarker) {
+		t.Errorf("oldest tool result not compacted")
+	}
+	if !strings.HasPrefix(messages[3].ToolResult.Content, compactedMarker) {
+		t.Errorf("second-oldest tool result not compacted")
+	}
+	if strings.HasPrefix(messages[4].ToolResult.Content, compactedMarker) {
+		t.Errorf("recent tool result should NOT be compacted")
+	}
+	// CallID preserved on compacted entries
+	if messages[1].ToolResult.CallID != "c1" {
+		t.Errorf("CallID lost on compaction")
+	}
+
+	// Running again must be a no-op (already-compacted skipped).
+	n = compactToolHistory(messages, 3)
+	if n != 0 {
+		t.Errorf("second pass should compact nothing; got %d", n)
+	}
+
+	// keep=0 → no-op
+	messages2 := []domain.Message{msg(1, bigPayload), msg(2, bigPayload)}
+	if compactToolHistory(messages2, 0) != 0 {
+		t.Errorf("keep=0 should be no-op")
+	}
+	if messages2[0].ToolResult.Content != bigPayload {
+		t.Errorf("keep=0 must not alter content")
 	}
 }

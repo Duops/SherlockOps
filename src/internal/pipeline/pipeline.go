@@ -336,10 +336,23 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, log *slog.Logger, alert 
 	result, err := p.analyzer.Analyze(ctx, alert)
 	if err != nil {
 		metrics.AlertsAnalyzed.WithLabelValues("error").Inc()
+		// Error notifications must land inside the alert thread, not in the
+		// channel root. Clone the alert per messenger ref and attach the
+		// messenger's Channel/MessageID as a ReplyTarget so the messenger's
+		// own resolveTarget routes the error reply as a thread message.
 		for _, ref := range refs {
 			m := p.findMessenger(ref.Messenger)
-			if m != nil {
-				m.SendError(ctx, alert, err)
+			if m == nil {
+				continue
+			}
+			errAlert := *alert
+			errAlert.ReplyTarget = &domain.ReplyTarget{
+				Messenger: ref.Messenger,
+				Channel:   ref.Channel,
+				ThreadID:  ref.MessageID,
+			}
+			if sendErr := m.SendError(ctx, &errAlert, err); sendErr != nil {
+				log.Error("phase 2: send error in thread failed", "messenger", m.Name(), "error", sendErr)
 			}
 		}
 		return fmt.Errorf("pipeline: analyze: %w", err)

@@ -173,6 +173,26 @@ type Analyzer struct {
 	outputTokenCost  float64
 	nameResolver     ToolNameResolver
 	logger           *slog.Logger
+
+	// maxToolOutputChars caps a single tool result's content before it is
+	// appended to the LLM message history. 0 = no cap. Defaults to 20000
+	// (~5k tokens) in New(). Without this, tools like k8s_get_pods or loki
+	// log queries can return hundreds of KB, inflate every subsequent
+	// iteration's input, and blow through the context window.
+	maxToolOutputChars int
+
+	// contextSoftLimitTokens is a running budget for totalInput+totalOutput
+	// tokens. When exceeded, the analyzer stops iterating and emits the
+	// best-effort answer built from lastContent rather than surface a 400
+	// "prompt too long" error to the user. 0 = no limit. Defaults to
+	// 800_000 in New() which leaves headroom below Anthropic's 1M cap.
+	contextSoftLimitTokens int
+
+	// keepRecentToolResults controls the compaction window. Before each
+	// LLM call, tool results older than the most recent N are replaced
+	// with a one-line summary. This bounds context growth across
+	// iterations: linear → constant. 0 = no compaction. Defaults to 6.
+	keepRecentToolResults int
 }
 
 // New creates a new Analyzer.
@@ -190,13 +210,37 @@ func New(
 		logger = slog.Default()
 	}
 	return &Analyzer{
-		llm:           llm,
-		tools:         tools,
-		systemPrompt:  systemPrompt,
-		language:      language,
-		maxIterations: maxIterations,
-		logger:        logger,
+		llm:                    llm,
+		tools:                  tools,
+		systemPrompt:           systemPrompt,
+		language:               language,
+		maxIterations:          maxIterations,
+		logger:                 logger,
+		maxToolOutputChars:     20000,
+		contextSoftLimitTokens: 800_000,
+		keepRecentToolResults:  6,
 	}
+}
+
+// SetKeepRecentToolResults overrides how many recent tool results to keep
+// fully sized in the message history. Anything older is rewritten into a
+// one-line summary on every iteration.
+func (a *Analyzer) SetKeepRecentToolResults(n int) {
+	a.keepRecentToolResults = n
+}
+
+// SetMaxToolOutputChars overrides the per-tool-result truncation cap.
+// Pass 0 to disable truncation (not recommended for LLMs with bounded
+// context windows).
+func (a *Analyzer) SetMaxToolOutputChars(n int) {
+	a.maxToolOutputChars = n
+}
+
+// SetContextSoftLimitTokens overrides the running input+output token budget
+// after which the analyzer stops iterating and returns the best-effort
+// answer. Pass 0 to disable.
+func (a *Analyzer) SetContextSoftLimitTokens(n int) {
+	a.contextSoftLimitTokens = n
 }
 
 // SetNameResolver sets a function to resolve tool prefixes to display names.
@@ -264,6 +308,19 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	var model string
 
 	for i := 0; i < a.maxIterations; i++ {
+		// Compact older tool results before each LLM call so the message
+		// history stays bounded regardless of iteration depth.
+		if a.keepRecentToolResults > 0 {
+			compacted := compactToolHistory(messages, a.keepRecentToolResults)
+			if compacted != 0 {
+				log.Debug("compacted tool history",
+					"iteration", i+1,
+					"compacted", compacted,
+					"keep_recent", a.keepRecentToolResults,
+				)
+			}
+		}
+
 		log.Debug("sending LLM request",
 			"iteration", i+1,
 			"messages", len(messages),
@@ -294,6 +351,31 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 
 		if resp.Content != "" {
 			lastContent = resp.Content
+		}
+
+		// Context soft-limit guard. Stop iterating before we hit the hard
+		// provider cap (e.g. Anthropic's 1M tokens) and blow up with a 400.
+		// Prefer a best-effort answer over an error surfaced to the user.
+		if a.contextSoftLimitTokens > 0 && (totalInput+totalOutput) > a.contextSoftLimitTokens {
+			log.Warn("context soft limit reached — returning best-effort result",
+				"iteration", i+1,
+				"total_input_tokens", totalInput,
+				"total_output_tokens", totalOutput,
+				"soft_limit", a.contextSoftLimitTokens,
+			)
+			text := lastContent
+			if text == "" {
+				text = "Analysis stopped early: LLM context budget exhausted before a final answer was produced. Partial tool results were available but the model did not converge."
+			}
+			result := buildResult(alert, text, toolsUsed, a.nameResolver)
+			result.TotalTokens = totalTokens
+			result.InputTokens = totalInput
+			result.OutputTokens = totalOutput
+			result.Model = model
+			result.InputTokenCost = a.inputTokenCost
+			result.OutputTokenCost = a.outputTokenCost
+			result.Iterations = i + 1
+			return result, nil
 		}
 
 		if resp.Done || len(resp.ToolCalls) == 0 {
@@ -345,9 +427,22 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 				success: !result.IsError,
 			})
 
+			// Cap the tool result before handing it to the LLM. Big blobs
+			// (k8s listings, loki chunks, prometheus series) otherwise
+			// inflate every subsequent iteration's input and starve the
+			// context window.
+			capped := capToolContent(result, a.maxToolOutputChars)
+			if capped != result {
+				log.Debug("tool output truncated before LLM",
+					"tool", tc.Name,
+					"original_length", len(result.Content),
+					"capped_length", len(capped.Content),
+				)
+			}
+
 			messages = append(messages, domain.Message{
 				Role:       "tool",
-				ToolResult: result,
+				ToolResult: capped,
 			})
 		}
 	}
@@ -457,6 +552,68 @@ func buildResult(alert *domain.Alert, text string, tools []toolRecord, resolver 
 		ToolsUsed:        names,
 		ToolsTrace:       trace,
 	}
+}
+
+// compactToolHistory rewrites tool-result messages older than the most
+// recent `keep` into a one-line summary, in-place on the messages slice.
+// Returns the number of messages that were compacted during this pass.
+// Messages that are already compact-marked (content begins with the
+// sentinel prefix) are left untouched so we don't re-summarize over and
+// over between iterations.
+//
+// This is what keeps context size constant across long tool-calling
+// loops: iteration N sees at most `keep` raw tool payloads plus a handful
+// of short summary lines for the older ones.
+func compactToolHistory(messages []domain.Message, keep int) int {
+	if keep <= 0 {
+		return 0
+	}
+	// Walk backwards and count full-size tool results; compact anything
+	// beyond the keep-window.
+	toolSeen := 0
+	compacted := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := &messages[i]
+		if m.Role != "tool" || m.ToolResult == nil {
+			continue
+		}
+		toolSeen++
+		if toolSeen <= keep {
+			continue
+		}
+		if strings.HasPrefix(m.ToolResult.Content, compactedMarker) {
+			continue // already compacted
+		}
+		summary := compactedMarker + fmt.Sprintf("earlier tool result (%d chars) dropped to save context",
+			len(m.ToolResult.Content))
+		m.ToolResult = &domain.ToolResult{
+			CallID:  m.ToolResult.CallID,
+			Content: summary,
+			IsError: m.ToolResult.IsError,
+		}
+		compacted++
+	}
+	return compacted
+}
+
+// compactedMarker prefixes tool messages that have been summarized so we
+// don't re-compact them on subsequent iterations.
+const compactedMarker = "[compacted] "
+
+// capToolContent returns a ToolResult whose Content is clipped to max chars.
+// Tools that exceed the cap get a suffix marker telling the LLM how many
+// bytes were dropped, so it can ask for a narrower query next time instead
+// of silently getting wrong data. Nil / zero max / content under the cap
+// are passed through unchanged.
+func capToolContent(result *domain.ToolResult, max int) *domain.ToolResult {
+	if result == nil || max <= 0 || len(result.Content) <= max {
+		return result
+	}
+	dropped := len(result.Content) - max
+	capped := *result
+	capped.Content = result.Content[:max] +
+		fmt.Sprintf("\n\n…[truncated %d of %d chars — narrow your query (shorter time range, smaller label set, specific resource name) to see the rest]", dropped, len(result.Content))
+	return &capped
 }
 
 // toolCategory extracts the prefix from a tool name.

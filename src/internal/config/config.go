@@ -77,6 +77,14 @@ type LLMConfig struct {
 	Language         string  `yaml:"language"`
 	InputTokenCost   float64 `yaml:"input_token_cost"`  // $/1M input tokens (0 = auto-detect from model)
 	OutputTokenCost  float64 `yaml:"output_token_cost"` // $/1M output tokens (0 = auto-detect from model)
+	// MaxToolOutputChars caps a single tool result's content before it is
+	// sent to the LLM. Prevents runaway context growth from big blobs
+	// (k8s listings, loki log chunks). 0 = no cap. Default 20000.
+	MaxToolOutputChars int `yaml:"max_tool_output_chars"`
+	// ContextSoftLimitTokens stops analysis early once input+output tokens
+	// exceed this budget, returning a best-effort answer instead of a
+	// provider "prompt too long" 400. 0 = no limit. Default 800000.
+	ContextSoftLimitTokens int `yaml:"context_soft_limit_tokens"`
 }
 
 // MessengersConfig holds all messenger configurations.
