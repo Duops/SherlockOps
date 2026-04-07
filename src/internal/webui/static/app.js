@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function loadHealth() {
-        fetchJSON('/healthz/ready').then(function (data) {
+        fetchJSON('/health/ready').then(function (data) {
             if (data.status === 'ok') {
                 healthDot.className = 'health-dot';
                 healthText.textContent = 'Healthy';
