@@ -218,6 +218,20 @@ func (a *Analyzer) SetRunbookStore(store domain.RunbookMatcher) {
 
 // Analyze processes an alert through the LLM with tool calling and returns the result.
 func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.AnalysisResult, error) {
+	// Derive a scoped logger that tags every log line in this analysis with
+	// the alert identifiers. This is what lets operators correlate a chain
+	// of "tool call" / "sending LLM request" / "tool call OK" lines back to
+	// a specific alert in a single grep.
+	log := a.logger.With(
+		"alert_fingerprint", alert.Fingerprint,
+		"alert_name", alert.Name,
+		"alert_source", alert.Source,
+	)
+	if alert.RequestID != "" {
+		log = log.With("request_id", alert.RequestID)
+	}
+	log.Info("analysis started", "max_iterations", a.maxIterations)
+
 	systemPrompt := a.buildSystemPrompt()
 
 	userContent := "<alert>\n" + alert.RawText + "\n</alert>"
@@ -225,7 +239,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	// Inject matching runbooks into the user message.
 	if a.runbooks != nil {
 		if hasMatch, block := a.runbooks.MatchAlert(alert); hasMatch {
-			a.logger.Debug("matched runbooks", "alert", alert.Name)
+			log.Debug("matched runbooks")
 			userContent += "\n\n" + block
 			userContent += "\n\nAnalyze the alert using the provided runbooks as context."
 		}
@@ -250,7 +264,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	var model string
 
 	for i := 0; i < a.maxIterations; i++ {
-		a.logger.Debug("sending LLM request",
+		log.Debug("sending LLM request",
 			"iteration", i+1,
 			"messages", len(messages),
 			"tools", len(availableTools),
@@ -291,6 +305,13 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 			result.InputTokenCost = a.inputTokenCost
 			result.OutputTokenCost = a.outputTokenCost
 			result.Iterations = i + 1
+			log.Info("analysis completed",
+				"iterations", i+1,
+				"total_tokens", totalTokens,
+				"input_tokens", totalInput,
+				"output_tokens", totalOutput,
+				"model", model,
+			)
 			return result, nil
 		}
 
@@ -303,20 +324,20 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 
 		// Execute each tool call and append results.
 		for _, tc := range resp.ToolCalls {
-			a.logger.Info("tool call", "tool", tc.Name, "iteration", i+1, "input_keys", toolInputKeys(tc.Input))
+			log.Info("tool call", "tool", tc.Name, "iteration", i+1, "input_keys", toolInputKeys(tc.Input))
 
 			result, execErr := a.tools.Execute(ctx, tc)
 			if execErr != nil {
-				a.logger.Error("tool call FAILED", "tool", tc.Name, "error", execErr)
+				log.Error("tool call FAILED", "tool", tc.Name, "error", execErr)
 				result = &domain.ToolResult{
 					CallID:  tc.ID,
 					Content: fmt.Sprintf("Error executing tool: %s", execErr.Error()),
 					IsError: true,
 				}
 			} else if result.IsError {
-				a.logger.Warn("tool call returned error", "tool", tc.Name, "content_preview", truncateLog(result.Content, 200))
+				log.Warn("tool call returned error", "tool", tc.Name, "content_preview", truncateLog(result.Content, 200))
 			} else {
-				a.logger.Info("tool call OK", "tool", tc.Name, "content_length", len(result.Content))
+				log.Info("tool call OK", "tool", tc.Name, "content_length", len(result.Content))
 			}
 
 			toolsUsed = append(toolsUsed, toolRecord{
@@ -332,7 +353,7 @@ func (a *Analyzer) Analyze(ctx context.Context, alert *domain.Alert) (*domain.An
 	}
 
 	// Max iterations reached — use last LLM content if available.
-	a.logger.Warn("max iterations reached", "max", a.maxIterations)
+	log.Warn("max iterations reached", "max", a.maxIterations)
 	text := "Analysis incomplete: maximum iterations reached"
 	if lastContent != "" {
 		text = lastContent
