@@ -205,7 +205,7 @@ func main() {
 		}
 	}
 
-	receiverRouter := receiver.NewRouter(cfg.Webhooks.PathPrefix, receivers, webhookHandler)
+	receiverRouter := receiver.NewRouter(cfg.Webhooks.PathPrefix, receivers, webhookHandler, logger)
 
 	// 8. Health checks.
 	healthChecker := health.NewChecker(sqliteCache, messengers, logger)
