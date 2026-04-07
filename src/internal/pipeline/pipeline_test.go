@@ -516,3 +516,104 @@ func TestProcess_ComputesFingerprint(t *testing.T) {
 		t.Error("expected fingerprint to be computed")
 	}
 }
+
+// --- Synthetic mention guard ---
+
+func TestProcess_SyntheticMention_SkipsLLMAndSendsHint(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "should not be reached"}}
+	m := &mockMessenger{name: "slack"}
+
+	p := New(cache, analyzer, []domain.Messenger{m}, testLogger())
+
+	mention := &domain.Alert{
+		Name:        "thread-mention",
+		Status:      domain.StatusFiring,
+		Fingerprint: "fp-mention",
+		ReplyTarget: &domain.ReplyTarget{Messenger: "slack", Channel: "C1", ThreadID: "T1"},
+		UserCommand: "analyze",
+	}
+
+	if err := p.Process(context.Background(), mention); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if analyzer.called != 0 {
+		t.Errorf("synthetic mention must NOT call analyzer; got called=%d", analyzer.called)
+	}
+	if len(m.sent) != 1 {
+		t.Fatalf("expected 1 SendAnalysis call (the hint); got %d", len(m.sent))
+	}
+	if m.sent[0] == nil || m.sent[0].Text == "" {
+		t.Errorf("hint message should have non-empty text")
+	}
+	// Cache must not be touched.
+	if got := len(cache.store); got != 0 {
+		t.Errorf("synthetic mention must not write to cache; cache size=%d", got)
+	}
+}
+
+func TestProcess_TeamsMentionAlsoSyntheticGuarded(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "x"}}
+	m := &mockMessenger{name: "teams"}
+
+	p := New(cache, analyzer, []domain.Messenger{m}, testLogger())
+
+	mention := &domain.Alert{
+		Name:        "teams-mention",
+		Status:      domain.StatusFiring,
+		Fingerprint: "fp-teams",
+		ReplyTarget: &domain.ReplyTarget{Messenger: "teams", Channel: "C1", ThreadID: "T1"},
+		UserCommand: "analyze",
+	}
+	if err := p.Process(context.Background(), mention); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if analyzer.called != 0 {
+		t.Errorf("teams-mention must NOT call analyzer; got %d", analyzer.called)
+	}
+}
+
+// --- Two-phase pending save (auto mode) ---
+
+func TestProcess_TwoPhase_SavesPending(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "analysis"}}
+	m := &mockMessenger{name: "slack"}
+	pending := newMockPendingStore()
+
+	p := New(cache, analyzer, []domain.Messenger{m}, testLogger())
+	// Auto mode by default; pending store wired so two-phase should also save.
+	p.SetPendingStore(pending)
+
+	if err := p.Process(context.Background(), webhookAlert()); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if len(pending.saved) != 1 {
+		t.Fatalf("expected 1 pending entry from two-phase delivery, got %d", len(pending.saved))
+	}
+	if _, ok := pending.saved[pendingTestKey("slack", "test-channel", "test-msg-id")]; !ok {
+		t.Errorf("pending entry not under expected key; have %v", pending.saved)
+	}
+	if analyzer.called != 1 {
+		t.Errorf("auto-mode two-phase should still run analyzer; called=%d", analyzer.called)
+	}
+}
+
+func TestProcess_TwoPhase_NoPendingSaveWhenStoreNil(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "analysis"}}
+	m := &mockMessenger{name: "slack"}
+
+	p := New(cache, analyzer, []domain.Messenger{m}, testLogger())
+	// No pending store wired — must not panic.
+
+	if err := p.Process(context.Background(), webhookAlert()); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if analyzer.called != 1 {
+		t.Errorf("analyzer should still be called; got %d", analyzer.called)
+	}
+}

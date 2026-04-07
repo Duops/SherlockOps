@@ -33,6 +33,12 @@ type SlackMessenger struct {
 	baseURL        string // overridable for testing
 	botUserID      string
 	mu             sync.Mutex
+
+	// recentEvents dedupes Slack event payloads keyed by "channel:ts" so that
+	// when both `app_mention` and `message.channels` are subscribed (Slack will
+	// fire BOTH for a single user mention) we only handle the event once.
+	recentEvents   map[string]time.Time
+	recentEventsMu sync.Mutex
 }
 
 // NewSlack creates a new SlackMessenger.
@@ -46,7 +52,44 @@ func NewSlack(botToken, appToken, signingSecret, defaultChannel string, listenCh
 		client:         &http.Client{Timeout: 30 * time.Second},
 		logger:         logger,
 		baseURL:        "https://slack.com/api",
+		recentEvents:   make(map[string]time.Time),
 	}
+}
+
+// recentEventTTL is how long an event key stays in the dedupe map before
+// it expires. Slack rarely re-delivers an event more than a few seconds after
+// the original.
+const recentEventTTL = 5 * time.Minute
+
+// markEventSeen reports whether the given (channel, ts) pair has already been
+// processed within recentEventTTL. Returns true if it is a duplicate (caller
+// should skip), false if it is fresh (caller should process and the event is
+// now recorded as seen).
+func (s *SlackMessenger) markEventSeen(channel, ts string) bool {
+	if channel == "" || ts == "" {
+		return false
+	}
+	key := channel + ":" + ts
+	now := time.Now()
+
+	s.recentEventsMu.Lock()
+	defer s.recentEventsMu.Unlock()
+
+	// Opportunistic GC of expired entries — the map stays bounded under
+	// normal load (handful of events per second × 5 min).
+	if len(s.recentEvents) > 1024 {
+		for k, t := range s.recentEvents {
+			if now.Sub(t) > recentEventTTL {
+				delete(s.recentEvents, k)
+			}
+		}
+	}
+
+	if t, ok := s.recentEvents[key]; ok && now.Sub(t) < recentEventTTL {
+		return true
+	}
+	s.recentEvents[key] = now
+	return false
 }
 
 func (s *SlackMessenger) Name() string {
@@ -239,16 +282,25 @@ func (s *SlackMessenger) SendAlert(ctx context.Context, alert *domain.Alert) (*d
 		return nil, err
 	}
 
+	// Slack always returns the canonical channel ID in the response, even when
+	// the request used a channel name or # prefix. We MUST normalize on the ID
+	// here so that the pending-store key matches the channel field that arrives
+	// in subsequent Slack events (which always use channel IDs).
 	var result struct {
-		TS string `json:"ts"`
+		TS      string `json:"ts"`
+		Channel string `json:"channel"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("decode ts from response: %w", err)
 	}
+	canonicalChannel := result.Channel
+	if canonicalChannel == "" {
+		canonicalChannel = channel
+	}
 
 	return &domain.MessageRef{
 		Messenger: "slack",
-		Channel:   channel,
+		Channel:   canonicalChannel,
 		MessageID: result.TS,
 		Alert:     alert,
 	}, nil
@@ -608,6 +660,22 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 		slog.String("bot_id", evt.BotID),
 		slog.String("text", textPreview),
 	)
+
+	// Dedupe by (channel, ts): when both `app_mention` and `message.channels`
+	// are subscribed, Slack delivers BOTH for the same user message. Process
+	// only the first one we see. Edits/deletes (subtype message_changed/deleted)
+	// have a different ts (the EVENT ts, not the message ts) so they are not
+	// affected by this filter.
+	if (evt.Type == "message" || evt.Type == "app_mention") && evt.SubType != "message_changed" && evt.SubType != "message_deleted" {
+		if s.markEventSeen(evt.Channel, evt.TS) {
+			s.logger.Debug("slack event ignored: duplicate (channel,ts) seen recently",
+				slog.String("type", evt.Type),
+				slog.String("channel", evt.Channel),
+				slog.String("ts", evt.TS),
+			)
+			return
+		}
+	}
 
 	// We care about two event families:
 	//   - "message"     : regular channel/thread messages (requires message.* subscriptions + channels:history)

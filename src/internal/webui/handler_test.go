@@ -427,3 +427,99 @@ func containsSubstr(s, sub string) bool {
 	}
 	return false
 }
+
+// --- Pending alerts merge ---
+
+type stubPendingLister struct {
+	items []PendingItem
+	err   error
+}
+
+func (s *stubPendingLister) ListPending(_ context.Context, _ int) ([]PendingItem, error) {
+	return s.items, s.err
+}
+
+func TestApiAlerts_MergesPendingDedupedByFingerprint(t *testing.T) {
+	now := time.Now()
+	c := &mockCache{
+		alerts: []*domain.AnalysisResult{
+			{AlertFingerprint: "fp-analyzed", Text: "analysis", CachedAt: now},
+		},
+	}
+	h := New(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.SetPendingLister(&stubPendingLister{
+		items: []PendingItem{
+			// Duplicate of an analyzed alert — must be skipped.
+			{Alert: &domain.Alert{Fingerprint: "fp-analyzed", RawText: "raw"}, CreatedAt: now},
+			// New pending alert — must be merged in as a stub.
+			{Alert: &domain.Alert{Fingerprint: "fp-pending", RawText: "raw pending"}, CreatedAt: now},
+			// Pending with no RawText — must use the placeholder.
+			{Alert: &domain.Alert{Fingerprint: "fp-empty"}, CreatedAt: now},
+		},
+	})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/alerts?limit=10", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var body struct {
+		Alerts  []*domain.AnalysisResult `json:"alerts"`
+		Total   int                      `json:"total"`
+		Pending int                      `json:"pending"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Pending != 2 {
+		t.Errorf("expected pending=2 (dedupe should drop fp-analyzed), got %d", body.Pending)
+	}
+	if len(body.Alerts) != 3 {
+		t.Errorf("expected 3 merged alerts, got %d", len(body.Alerts))
+	}
+	// Find the empty-text stub and check the placeholder.
+	var foundEmpty bool
+	for _, a := range body.Alerts {
+		if a.AlertFingerprint == "fp-empty" {
+			foundEmpty = true
+			if a.Text == "" {
+				t.Errorf("placeholder text should be set for empty pending")
+			}
+		}
+	}
+	if !foundEmpty {
+		t.Errorf("fp-empty pending stub missing from merged alerts")
+	}
+}
+
+func TestApiAlerts_PendingListerErrorIsTolerated(t *testing.T) {
+	now := time.Now()
+	c := &mockCache{
+		alerts: []*domain.AnalysisResult{
+			{AlertFingerprint: "fp1", Text: "a", CachedAt: now},
+		},
+	}
+	h := New(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.SetPendingLister(&stubPendingLister{err: errExpected})
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/alerts", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 even when pending lister errors, got %d", rec.Code)
+	}
+}
+
+var errExpected = stubErr("boom")
+
+type stubErr string
+
+func (e stubErr) Error() string { return string(e) }

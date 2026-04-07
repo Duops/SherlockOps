@@ -151,6 +151,31 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 		return nil
 	}
 
+	// Synthetic mention alerts ("thread-mention" / "teams-mention") only reach
+	// processSinglePhase when the user pinged @bot in a thread BUT we did NOT
+	// find a matching pending alert. Running the LLM on a fingerprint with no
+	// alert payload makes the model hallucinate (it grabs random tools and
+	// fishes for context — see "loki-read OOMKill in a rabbitmq thread"
+	// reports). Fail fast with a clear in-thread message instead.
+	if isSyntheticMention(alert) {
+		p.logger.Info("synthetic mention without pending alert — sending hint, skipping LLM",
+			"fingerprint", alert.Fingerprint,
+			"messenger", func() string {
+				if alert.ReplyTarget != nil {
+					return alert.ReplyTarget.Messenger
+				}
+				return ""
+			}(),
+		)
+		hint := &domain.AnalysisResult{
+			AlertFingerprint: alert.Fingerprint,
+			Text: "I could not find a stored alert for this thread. " +
+				"Please mention me as a **reply to the original alert message**, " +
+				"not to one of my previous answers.",
+		}
+		return p.send(ctx, alert, hint)
+	}
+
 	// Synthetic mention alerts (e.g. "thread-mention" produced by Slack/Teams
 	// listeners when @bot is pinged in a thread without a corresponding
 	// pending entry) must NOT touch the cache: their fingerprint is computed

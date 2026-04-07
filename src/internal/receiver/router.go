@@ -15,7 +15,14 @@ const maxBodySize = 1 << 20
 
 // NewRouter creates an HTTP handler that registers POST routes for each receiver.
 // Routes are: POST {prefix}/{receiver.Source()}
-func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain.Alert)) http.Handler {
+//
+// The logger is required so that webhook intake logs share the same handler
+// (level, format) as the rest of the service. Passing nil falls back to the
+// default global slog logger as a safety net.
+func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain.Alert), logger *slog.Logger) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	mux := http.NewServeMux()
 
 	prefix = strings.TrimRight(prefix, "/")
@@ -33,7 +40,7 @@ func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
-				slog.Error("failed to read request body", "source", rec.Source(), "error", err)
+				logger.Error("failed to read request body", "source", rec.Source(), "error", err)
 				http.Error(w, "request body too large or unreadable", http.StatusBadRequest)
 				return
 			}
@@ -48,13 +55,13 @@ func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain
 
 			alerts, err := rec.Parse(r.Context(), body, headers)
 			if err != nil {
-				slog.Error("failed to parse alerts", "source", rec.Source(), "error", err)
+				logger.Error("failed to parse alerts", "source", rec.Source(), "error", err)
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 				return
 			}
 
 			// Apply environment from header.
-			applyEnvironmentHeader(r, alerts)
+			applyEnvironmentHeader(r, alerts, logger)
 
 			// Apply channel routing from headers.
 			applyChannelHeaders(r, alerts)
@@ -62,12 +69,12 @@ func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain
 			// Group alerts by alertname.
 			alerts = GroupAlerts(alerts)
 
-			slog.Info("received alerts", "source", rec.Source(), "count", len(alerts))
+			logger.Info("received alerts", "source", rec.Source(), "count", len(alerts))
 
 			func() {
 				defer func() {
 					if rv := recover(); rv != nil {
-						slog.Error("handler panic", "source", rec.Source(), "panic", rv)
+						logger.Error("handler panic", "source", rec.Source(), "panic", rv)
 						writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 					}
 				}()
@@ -84,7 +91,7 @@ func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain
 // applyEnvironmentHeader reads X-Environment header and sets it on all alerts.
 // The value is validated to contain only alphanumeric characters, hyphens, and
 // underscores to prevent injection attacks.
-func applyEnvironmentHeader(r *http.Request, alerts []domain.Alert) {
+func applyEnvironmentHeader(r *http.Request, alerts []domain.Alert, logger *slog.Logger) {
 	env := r.Header.Get("X-Environment")
 	if env == "" {
 		return
@@ -92,12 +99,12 @@ func applyEnvironmentHeader(r *http.Request, alerts []domain.Alert) {
 	// Validate: only allow safe characters (alphanumeric, hyphens, underscores, dots).
 	for _, c := range env {
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-			slog.Warn("rejected invalid X-Environment header", "value", env)
+			logger.Warn("rejected invalid X-Environment header", "value", env)
 			return
 		}
 	}
 	if len(env) > 64 {
-		slog.Warn("rejected oversized X-Environment header", "length", len(env))
+		logger.Warn("rejected oversized X-Environment header", "length", len(env))
 		return
 	}
 	for i := range alerts {

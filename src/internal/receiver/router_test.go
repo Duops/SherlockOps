@@ -18,8 +18,7 @@ func TestRouter_PostAlert(t *testing.T) {
 	}
 
 	receivers := []domain.Receiver{NewGenericReceiver()}
-	mux := NewRouter("/webhook", receivers, handler)
-
+	mux := NewRouter("/webhook", receivers, handler, nil)
 	body := `{"alertname": "TestAlert", "severity": "warning"}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook/generic", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -48,7 +47,7 @@ func TestRouter_PostAlert(t *testing.T) {
 
 func TestRouter_MethodNotAllowed(t *testing.T) {
 	receivers := []domain.Receiver{NewGenericReceiver()}
-	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/webhook/generic", nil)
 	rec := httptest.NewRecorder()
@@ -62,7 +61,7 @@ func TestRouter_MethodNotAllowed(t *testing.T) {
 
 func TestRouter_InvalidJSON(t *testing.T) {
 	receivers := []domain.Receiver{NewGenericReceiver()}
-	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/generic", strings.NewReader("not json"))
 	rec := httptest.NewRecorder()
@@ -80,7 +79,7 @@ func TestRouter_MultipleReceivers(t *testing.T) {
 		NewAlertmanagerReceiver(),
 		NewDatadogReceiver(),
 	}
-	mux := NewRouter("/api/v1/webhook", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/api/v1/webhook", receivers, func([]domain.Alert) {}, nil)
 
 	// Test each receiver route exists.
 	for _, source := range []string{"generic", "alertmanager", "datadog"} {
@@ -105,7 +104,7 @@ func TestRouter_MultipleReceivers(t *testing.T) {
 
 func TestRouter_PrefixTrailingSlash(t *testing.T) {
 	receivers := []domain.Receiver{NewGenericReceiver()}
-	mux := NewRouter("/webhook/", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/webhook/", receivers, func([]domain.Alert) {}, nil)
 
 	body := `{"alertname": "Test"}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook/generic", strings.NewReader(body))
@@ -122,7 +121,7 @@ func TestRouter_HandlerPanicRecovery(t *testing.T) {
 	receivers := []domain.Receiver{NewGenericReceiver()}
 	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {
 		panic("handler panic")
-	})
+	}, nil)
 
 	body := `{"alertname": "PanicTest"}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook/generic", strings.NewReader(body))
@@ -139,7 +138,7 @@ func TestRouter_HeadersPassed(t *testing.T) {
 	// Use a custom receiver that checks headers.
 	r := NewAlertmanagerReceiver()
 	receivers := []domain.Receiver{r}
-	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {}, nil)
 
 	body := `{"status": "firing", "alerts": [{"status": "firing", "labels": {"alertname": "Test"}, "annotations": {}}]}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook/alertmanager", strings.NewReader(body))
@@ -164,7 +163,7 @@ func (r *failingReceiver) Parse(_ context.Context, _ []byte, _ map[string]string
 
 func TestRouter_ReceiverParseError(t *testing.T) {
 	receivers := []domain.Receiver{&failingReceiver{}}
-	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/failing", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
@@ -178,7 +177,7 @@ func TestRouter_ReceiverParseError(t *testing.T) {
 
 func TestRouter_OversizedBody(t *testing.T) {
 	receivers := []domain.Receiver{NewGenericReceiver()}
-	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {})
+	mux := NewRouter("/webhook", receivers, func([]domain.Alert) {}, nil)
 
 	// Create a body larger than maxBodySize (1 MB).
 	largeBody := strings.Repeat("x", 1<<20+1)
