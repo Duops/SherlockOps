@@ -71,6 +71,14 @@ cache:
 
 # ─── Pipeline ─────────────────────────────────────────────────
 pipeline:
+  # mode controls how incoming alerts are processed:
+  #   auto   - analyze every alert immediately (default)
+  #   manual - just post the raw alert to messengers and remember it;
+  #            run analysis only when a user replies to that message and
+  #            mentions the bot with an "analyze" command, e.g.
+  #            "@bot analyze" / "@бот проанализируй". Pending alerts are
+  #            persisted in sqlite and survive restarts.
+  mode: auto
   workers: 5            # Number of async analysis workers
   queue_size: 1000      # Max alerts in queue before dropping
   max_concurrent_llm: 3 # Max parallel LLM API calls
