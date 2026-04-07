@@ -1,0 +1,7 @@
+.git
+.claude*
+.swarm
+.mcp.json
+docs/
+*.md
+.env

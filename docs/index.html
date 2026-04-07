@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SherlockOps — Your alerts deserve a detective, not a dashboard.</title>
+<meta name="description" content="SherlockOps analyzes your alerts, queries your infrastructure, and gives you the root cause. Self-hosted, any LLM, 50+ tools.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/devicon.min.css">
+<style>
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #0a0a0a;
+  color: #e5e5e5;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+code, pre, .mono {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+a {
+  color: #22c55e;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: #4ade80;
+}
+
+/* Nav */
+nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid #1a1a1a;
+  padding: 0 24px;
+}
+
+.nav-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+}
+
+.nav-logo {
+  font-weight: 700;
+  font-size: 16px;
+  color: #e5e5e5;
+  letter-spacing: -0.02em;
+}
+
+.nav-logo span {
+  color: #22c55e;
+}
+
+.nav-links {
+  display: flex;
+  gap: 32px;
+  list-style: none;
+}
+
+.nav-links a {
+  color: #a3a3a3;
+  font-size: 14px;
+  font-weight: 450;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover {
+  color: #e5e5e5;
+}
+
+/* Sections */
+section {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 120px 24px;
+}
+
+/* Hero */
+.hero {
+  padding-top: 140px;
+  display: flex;
+  gap: 64px;
+  align-items: flex-start;
+}
+
+.hero-terminal {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  width: 0;
+}
+
+.hero-text {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+  padding-top: 16px;
+}
+
+.terminal {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 16px;
+  background: #1c1c1f;
+  border-bottom: 1px solid #27272a;
+}
+
+.terminal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.terminal-dot:nth-child(1) { background: #ef4444; }
+.terminal-dot:nth-child(2) { background: #f59e0b; }
+.terminal-dot:nth-child(3) { background: #22c55e; }
+
+.terminal-title {
+  margin-left: 8px;
+  color: #525252;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.terminal-body {
+  padding: 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #a3e635;
+  height: 320px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.terminal-body .cmd { color: #e5e5e5; }
+.terminal-body .dim { color: #525252; }
+.terminal-body .green { color: #22c55e; }
+.terminal-body .amber { color: #f59e0b; }
+.terminal-body .red { color: #ef4444; }
+.terminal-body .white { color: #e5e5e5; }
+
+.hero-tagline {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: #f5f5f5;
+  margin-bottom: 20px;
+}
+
+.hero-tagline em {
+  font-style: normal;
+  color: #22c55e;
+}
+
+.hero-desc {
+  font-size: 16px;
+  color: #a3a3a3;
+  line-height: 1.65;
+  margin-bottom: 36px;
+  max-width: 420px;
+}
+
+.hero-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #22c55e;
+  color: #0a0a0a;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #16a34a;
+  color: #0a0a0a;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: transparent;
+  color: #a3a3a3;
+  font-weight: 500;
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.btn-secondary:hover {
+  border-color: #525252;
+  color: #e5e5e5;
+}
+
+/* Section titles */
+.section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #22c55e;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #f5f5f5;
+  margin-bottom: 56px;
+}
+
+/* How it works */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 72px;
+}
+
+.step {
+  display: flex;
+  gap: 48px;
+  align-items: flex-start;
+}
+
+.step-number {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 48px;
+  font-weight: 700;
+  color: #1a1a1a;
+  -webkit-text-stroke: 1px #333;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 56px;
+}
+
+.step-content {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.step-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #e5e5e5;
+}
+
+.step-desc {
+  color: #a3a3a3;
+  font-size: 14px;
+  margin-bottom: 20px;
+  max-width: 540px;
+}
+
+.code-block {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  padding: 16px 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  max-width: 100%;
+  overflow-x: auto;
+  box-sizing: border-box;
+  line-height: 1.65;
+  color: #a3e635;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.code-block .comment { color: #525252; }
+.code-block .string { color: #22c55e; }
+.code-block .key { color: #f59e0b; }
+.code-block .value { color: #a3e635; }
+.code-block .cmd { color: #e5e5e5; }
+
+/* Slack-style mockup */
+.slack-mock {
+  background: #1e1e21;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.slack-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.slack-avatar {
+  width: 32px;
+  height: 32px;
+  background: #22c55e;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0a0a0a;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.slack-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #e5e5e5;
+}
+
+.slack-time {
+  font-size: 12px;
+  color: #525252;
+  margin-left: auto;
+}
+
+.slack-body {
+  font-size: 14px;
+  line-height: 1.65;
+  color: #d4d4d4;
+}
+
+.slack-body strong { color: #ef4444; }
+.slack-body .cause { color: #f59e0b; }
+.slack-body code {
+  background: #27272a;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #a3e635;
+}
+
+.slack-body .action {
+  display: block;
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid #22c55e;
+  color: #a3a3a3;
+}
+
+/* Integrations grid */
+.integrations-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #18181b;
+}
+
+.integration-col {
+  padding: 28px 24px;
+  border-right: 1px solid #27272a;
+}
+
+.integration-col:last-child {
+  border-right: none;
+}
+
+.integration-col h4 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #22c55e;
+  margin-bottom: 4px;
+}
+
+.integration-col .separator {
+  font-family: 'JetBrains Mono', monospace;
+  color: #333;
+  font-size: 13px;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.integration-col ul {
+  list-style: none;
+  padding: 0;
+}
+
+.integration-col li {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #a3a3a3;
+  padding: 3px 0;
+}
+
+.integration-col li.muted {
+  color: #525252;
+  font-style: italic;
+}
+
+.integration-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.integration-icon i {
+  font-size: 18px;
+  color: #a3a3a3;
+  transition: color 0.2s;
+}
+
+.integration-icon .text-icon {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #a3a3a3;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #333;
+  border-radius: 4px;
+  transition: color 0.2s, border-color 0.2s;
+  line-height: 1;
+}
+
+.integration-icon svg {
+  width: 18px;
+  height: 18px;
+  color: #a3a3a3;
+  transition: color 0.2s;
+}
+
+.integration-col li:hover .integration-icon i {
+  color: #e5e5e5;
+}
+
+.integration-col li:hover .integration-icon .text-icon {
+  color: #e5e5e5;
+  border-color: #525252;
+}
+
+.integration-col li:hover .integration-icon svg {
+  color: #e5e5e5;
+}
+
+/* Why section */
+.why-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px 64px;
+}
+
+.why-item h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e5e5e5;
+  margin-bottom: 6px;
+}
+
+.why-item h3 span {
+  color: #22c55e;
+  margin-right: 4px;
+}
+
+.why-item p {
+  font-size: 14px;
+  color: #737373;
+  line-height: 1.6;
+}
+
+/* Architecture */
+.arch-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 40px 20px;
+}
+.arch-row {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.arch-box {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  padding: 16px 28px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #e5e5e5;
+  text-align: center;
+  min-width: 120px;
+  position: relative;
+  transition: border-color 0.2s;
+}
+.arch-box:hover {
+  border-color: #22c55e;
+}
+.arch-box.green { border-color: #22c55e; }
+.arch-box.amber { border-color: #f59e0b; }
+.arch-box .arch-label {
+  font-size: 11px;
+  color: #525252;
+  margin-top: 4px;
+}
+.arch-arrow {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+  color: #333;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+  line-height: 1;
+}
+.arch-arrow.branch {
+  display: flex;
+  justify-content: center;
+  gap: 80px;
+  padding: 4px 0;
+}
+.arch-note {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #404040;
+  margin-left: 12px;
+}
+@media (max-width: 640px) {
+  .arch-row { flex-direction: column; align-items: center; }
+  .arch-arrow.branch { gap: 20px; }
+}
+
+/* Quickstart */
+.quickstart-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.qs-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #525252;
+  margin-bottom: 8px;
+}
+
+/* Footer */
+footer {
+  border-top: 1px solid #1a1a1a;
+  padding: 48px 24px 32px;
+}
+
+.footer-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+footer p {
+  font-size: 14px;
+  color: #525252;
+}
+
+footer a {
+  color: #525252;
+}
+
+footer a:hover {
+  color: #a3a3a3;
+}
+
+/* Nav actions */
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.nav-github {
+  color: #a3a3a3;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.2s;
+}
+.nav-github:hover {
+  color: #e5e5e5;
+}
+.nav-github svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+.nav-cta {
+  background: #22c55e;
+  color: #0a0a0a;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+.nav-cta:hover {
+  background: #16a34a;
+  color: #0a0a0a;
+}
+
+/* Expanded footer */
+.footer-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 48px;
+  text-align: left;
+  margin-bottom: 32px;
+}
+.footer-brand p {
+  font-size: 14px;
+  color: #525252;
+  margin-top: 8px;
+  line-height: 1.6;
+}
+.footer-col h5 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #a3a3a3;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.footer-col ul {
+  list-style: none;
+  padding: 0;
+}
+.footer-col li {
+  margin-bottom: 8px;
+}
+.footer-col a {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #525252;
+  transition: color 0.2s;
+}
+.footer-col a:hover {
+  color: #a3a3a3;
+}
+.footer-bottom {
+  border-top: 1px solid #1a1a1a;
+  padding-top: 20px;
+  font-size: 13px;
+  color: #404040;
+  text-align: center;
+}
+
+/* Fade-in */
+.fade-in {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.fade-in.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Cursor blink */
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: #22c55e;
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .hero {
+    flex-direction: column;
+    gap: 40px;
+    padding-top: 100px;
+  }
+
+  .hero-terminal,
+  .hero-text {
+    width: 100%;
+    flex: none;
+  }
+
+  .hero-tagline {
+    font-size: 28px;
+    line-height: 1.2;
+  }
+
+  .hero-subtitle {
+    font-size: 15px;
+  }
+
+  section {
+    padding: 60px 16px;
+  }
+
+  .section-title {
+    font-size: 24px;
+  }
+
+  .step {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .integrations-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .integration-col:nth-child(2) {
+    border-right: none;
+  }
+
+  .integration-col:nth-child(1),
+  .integration-col:nth-child(2) {
+    border-bottom: 1px solid #27272a;
+  }
+
+  .why-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .nav-links {
+    display: none;
+  }
+
+  .nav-actions .nav-github {
+    display: none;
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  /* Terminal in hero */
+  .terminal {
+    font-size: 11px;
+  }
+  .terminal-body {
+    height: 360px;
+    padding: 14px;
+  }
+
+  /* Architecture blocks */
+  .arch-row {
+    gap: 8px;
+  }
+  .arch-box {
+    padding: 10px 14px;
+    font-size: 11px;
+    min-width: 90px;
+  }
+
+  /* Code blocks */
+  pre, code {
+    font-size: 11px !important;
+  }
+
+  /* MCP section */
+  .mcp-section {
+    padding: 20px !important;
+  }
+
+  /* Buttons */
+  .hero-buttons {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .hero-buttons a {
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero {
+    padding-top: 80px;
+  }
+
+  .hero-tagline {
+    font-size: 22px;
+  }
+
+  section {
+    padding: 48px 12px;
+  }
+
+  .section-title {
+    font-size: 20px;
+  }
+
+  .integrations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .integration-col {
+    border-right: none;
+    border-bottom: 1px solid #27272a;
+    padding: 16px 12px;
+  }
+
+  .integration-col:last-child {
+    border-bottom: none;
+  }
+
+  /* Architecture stacks vertically */
+  .arch-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .arch-box {
+    width: 100%;
+    max-width: 240px;
+  }
+  .arch-arrow.branch {
+    gap: 12px;
+  }
+
+  /* Terminal */
+  .terminal {
+    font-size: 10px;
+    border-radius: 6px;
+  }
+  .terminal-body {
+    height: 380px;
+    padding: 10px;
+  }
+
+  /* Nav */
+  .nav-logo {
+    font-size: 16px;
+  }
+
+  /* Quickstart code */
+  .mcp-section pre {
+    overflow-x: auto;
+  }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="nav-logo">Sherlock<span>Ops</span></div>
+    <ul class="nav-links">
+      <li><a href="#how-it-works">How it Works</a></li>
+      <li><a href="#integrations">Integrations</a></li>
+      <li><a href="#why">Why SherlockOps</a></li>
+      <li><a href="#quickstart">Quick Start</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a href="https://github.com/Duops/SherlockOps" class="nav-github" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <a href="#quickstart" class="nav-cta">Get Started</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-terminal">
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <span class="terminal-title">sherlock-ops</span>
+      </div>
+      <div class="terminal-body" id="hero-terminal"></div>
+    </div>
+  </div>
+  <div class="hero-text">
+    <h1 class="hero-tagline">Your alerts deserve a <em>detective</em>, not a dashboard.</h1>
+    <p class="hero-desc">SherlockOps receives an alert, queries your monitoring, logs, and infrastructure, then tells you exactly what went wrong and how to fix it.</p>
+    <div class="hero-buttons">
+      <a href="#quickstart" class="btn-primary">Get Started</a>
+      <a href="https://github.com/Duops/SherlockOps" class="btn-secondary" target="_blank" rel="noopener">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section id="how-it-works">
+  <p class="section-label fade-in">How it works</p>
+  <h2 class="section-title fade-in">Three steps. No dashboards involved.</h2>
+
+  <div class="steps">
+    <div class="step fade-in">
+      <div class="step-number">01</div>
+      <div class="step-content">
+        <h3 class="step-title">Alert comes in</h3>
+        <p class="step-desc">Alertmanager fires a webhook. SherlockOps picks it up.</p>
+        <div class="code-block"><span class="comment"># alertmanager.yml</span>
+<span class="key">receivers</span>:
+  - <span class="key">name</span>: <span class="string">'sherlockops'</span>
+    <span class="key">webhook_configs</span>:
+      - <span class="key">url</span>: <span class="string">'http://sherlockops:8080/webhook/alertmanager'</span>
+        <span class="key">send_resolved</span>: <span class="value">true</span>
+        <span class="key">http_config</span>:
+          <span class="key">http_headers</span>:
+            - <span class="key">name</span>: <span class="string">X-Environment</span>
+              <span class="key">values</span>: [ <span class="string">"prod"</span> ]
+            - <span class="key">name</span>: <span class="string">X-Channel-Slack</span>
+              <span class="key">values</span>: [ <span class="string">"#alerts"</span> ]</div>
+      </div>
+    </div>
+
+    <div class="step fade-in">
+      <div class="step-number">02</div>
+      <div class="step-content">
+        <h3 class="step-title">SherlockOps investigates</h3>
+        <p class="step-desc">The agent picks the right tools, queries your stack, and correlates the data. No runbooks needed.</p>
+        <div class="code-block"><span class="dim">prometheus</span> <span class="cmd">───</span> cpu_usage: 94.2%, mem: 87%
+<span class="dim">kubernetes</span> <span class="cmd">───</span> pod restarts: 3 in 10min
+<span class="dim">loki</span>       <span class="cmd">───</span> OOMKilled detected, exit code 137
+<span class="dim">git</span>        <span class="cmd">───</span> commit abc123 deployed 2h ago
+<span class="comment">
+  └─ correlating 4 data sources...</span>
+<span class="string">  ✓ Root cause identified</span></div>
+      </div>
+    </div>
+
+    <div class="step fade-in">
+      <div class="step-number">03</div>
+      <div class="step-content">
+        <h3 class="step-title">You get the answer</h3>
+        <p class="step-desc">A clear diagnosis lands in Slack, Telegram, or wherever you work. With the root cause, evidence, and next steps.</p>
+        <div class="slack-mock">
+          <div class="slack-header">
+            <div class="slack-avatar">S</div>
+            <span class="slack-name">SherlockOps</span>
+            <span class="slack-time">2 min ago</span>
+          </div>
+          <div class="slack-body">
+            <strong>CRITICAL</strong> &mdash; HighCPU on <code>prod/payment-service</code>
+            <br><br>
+            <span class="cause">Diagnosis:</span> Memory leak causing OOM kills. Pod restarted 3 times in 10 min. Triggered by commit <code>abc123</code> deployed 2h ago.
+            <span class="action">Scale memory 512Mi &rarr; 1Gi &middot; Revert commit abc123 &middot; Check for goroutine leak in /api/checkout</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Integrations -->
+<section id="integrations">
+  <p class="section-label fade-in">Integrations</p>
+  <h2 class="section-title fade-in">What it connects to</h2>
+
+  <div class="integrations-grid fade-in">
+    <div class="integration-col">
+      <h4>Monitoring</h4>
+      <span class="separator">───────────</span>
+      <ul>
+        <li><span class="integration-icon"><i class="devicon-prometheus-plain"></i></span>Alertmanager</li>
+        <li><span class="integration-icon"><i class="devicon-grafana-plain"></i></span>Grafana</li>
+        <li><span class="integration-icon"><span class="text-icon">Z</span></span>Zabbix</li>
+        <li><span class="integration-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19.57 17.04l-1.997-1.316-1.665 2.782-1.937-.567-1.706 2.604.087.82 9.274-1.71-.538-5.794zm-8.649-2.498l1.488-.204c.241.108.409.15.697.223.45.117.97.23 1.741-.16.18-.088.553-.43.704-.625l6.096-1.106.622 7.527-10.444 1.882zm11.325-2.712l-.602.115L20.488 0 .789 2.285l2.427 19.693 2.306-.334c-.184-.263-.471-.581-.96-.989-.68-.564-.44-1.522-.039-2.127.53-1.022 3.26-2.322 3.106-3.956-.056-.594-.15-1.368-.702-1.898-.02.22.017.432.017.432s-.227-.289-.34-.683c-.112-.15-.2-.199-.319-.4-.085.233-.073.503-.073.503s-.186-.437-.216-.807c-.11.166-.137.48-.137.48s-.241-.69-.186-1.062c-.11-.323-.436-.965-.343-2.424.6.421 1.924.321 2.44-.439.171-.251.288-.939-.086-2.293-.24-.868-.835-2.16-1.066-2.651l-.028.02c.122.395.374 1.223.47 1.625.293 1.218.372 1.642.234 2.204-.116.488-.397.808-1.107 1.165-.71.358-1.653-.514-1.713-.562-.69-.55-1.224-1.447-1.284-1.883-.062-.477.275-.763.445-1.153-.243.07-.514.192-.514.192s.323-.334.722-.624c.165-.109.262-.178.436-.323a9.762 9.762 0 0 0-.456.003s.42-.227.855-.392c-.318-.014-.623-.003-.623-.003s.937-.419 1.678-.727c.509-.208 1.006-.147 1.286.257.367.53.752.817 1.569.996.501-.223.653-.337 1.284-.509.554-.61.99-.688.99-.688s-.216.198-.274.51c.314-.249.66-.455.66-.455s-.134.164-.259.426l.03.043c.366-.22.797-.394.797-.394s-.123.156-.268.358c.277-.002.838.012 1.056.037 1.285.028 1.552-1.374 2.045-1.55.618-.22.894-.353 1.947.68.903.888 1.609 2.477 1.259 2.833-.294.295-.874-.115-1.516-.916a3.466 3.466 0 0 1-.716-1.562 1.533 1.533 0 0 0-.497-.85s.23.51.23.96c0 .246.03 1.165.424 1.68-.039.076-.057.374-.1.43-.458-.554-1.443-.95-1.604-1.067.544.445 1.793 1.468 2.273 2.449.453.927.186 1.777.416 1.997.065.063.976 1.197 1.15 1.767.306.994.019 2.038-.381 2.685l-1.117.174c-.163-.045-.273-.068-.42-.153.08-.143.241-.5.243-.572l-.063-.111c-.348.492-.93.97-1.414 1.245-.633.359-1.363.304-1.838.156-1.348-.415-2.623-1.327-2.93-1.566 0 0-.01.191.048.234.34.383 1.119 1.077 1.872 1.56l-1.605.177.759 5.908c-.337.048-.39.071-.757.124-.325-1.147-.946-1.895-1.624-2.332-.599-.384-1.424-.47-2.214-.314l-.05.059a2.851 2.851 0 0 1 1.863.444c.654.413 1.181 1.481 1.375 2.124.248.822.42 1.7-.248 2.632-.476.662-1.864 1.028-2.986.237.3.481.705.876 1.25.95.809.11 1.577-.03 2.106-.574.452-.464.69-1.434.628-2.456l.714-.104.258 1.834 11.827-1.424zM15.05 6.848c-.034.075-.085.125-.007.37l.004.014.013.032.032.073c.14.287.295.558.552.696.067-.011.136-.019.207-.023.242-.01.395.028.492.08.009-.048.01-.119.005-.222-.018-.364.072-.982-.626-1.308-.264-.122-.634-.084-.757.068a.302.302 0 0 1 .058.013c.186.066.06.13.027.207m1.958 3.392c-.092-.05-.52-.03-.821.005-.574.068-1.193.267-1.328.372-.247.191-.135.523.047.66.511.382.96.638 1.432.575.29-.038.546-.497.728-.914.124-.288.124-.598-.058-.698m-5.077-2.942c.162-.154-.805-.355-1.556.156-.554.378-.571 1.187-.041 1.646.053.046.096.078.137.104a4.77 4.77 0 0 1 1.396-.412c.113-.125.243-.345.21-.745-.044-.542-.455-.456-.146-.749"/></svg></span>Datadog</li>
+        <li><span class="integration-icon"><i class="devicon-elasticsearch-plain"></i></span>ELK / Loki</li>
+      </ul>
+    </div>
+    <div class="integration-col">
+      <h4>Cloud</h4>
+      <span class="separator">───────────</span>
+      <ul>
+        <li><span class="integration-icon"><i class="devicon-amazonwebservices-plain-wordmark"></i></span>AWS CloudWatch</li>
+        <li><span class="integration-icon"><i class="devicon-googlecloud-plain"></i></span>GCP Monitoring</li>
+        <li><span class="integration-icon"><i class="devicon-azure-plain"></i></span>Azure Monitor</li>
+        <li><span class="integration-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.38 0 0 5.38 0 12s5.38 12 12 12 12-5.38 12-12S18.62 0 12 0zM7.163 20.618C4.152 18.927 2.12 15.702 2.12 12c0-5.46 4.42-9.88 9.88-9.88 1.429 0 2.496.536 3.029 1.187.534.65.684 1.715.5 3.253l-3.207.631c-2.905.532-4.506 2.148-5.06 5.065-.07.406-.15.812-.226 1.196-.031.157-.062.312-.09.46-.073.396-.143.773-.208 1.124-.093.505-.177.957-.247 1.34-.324 1.884-.06 3.276.672 4.242zm7.986-11.851c-.087.434-.167.867-.247 1.302-.081.434-.16.868-.247 1.301-.396 2.05-1.364 2.996-3.42 3.391l-2.391.474c.059-.296.119-.611.178-.927.022-.12.044-.241.067-.362.078-.421.157-.855.25-1.313.395-2.05 1.344-2.996 3.399-3.391l2.411-.475zM12 21.88c-1.429 0-2.496-.536-3.029-1.187s-.684-1.715-.5-3.253l3.18-.631c2.905-.532 4.507-2.148 5.08-5.046.069-.406.149-.812.226-1.196.031-.157.062-.311.09-.46.087-.471.171-.917.247-1.327.081-.432.154-.822.215-1.156.325-1.884.061-3.275-.671-4.242C19.848 5.073 21.88 8.298 21.88 12c0 5.46-4.42 9.88-9.88 9.88z"/></svg></span>Yandex Cloud</li>
+        <li><span class="integration-icon"><i class="devicon-digitalocean-plain"></i></span>DigitalOcean</li>
+        <li><span class="integration-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M.5 10.1a.505.505 0 00-.197.048.497.497 0 00-.25.68l1.138 2.475c.179.38.38.592.721.592.342 0 .542-.22.72-.592l1.003-2.186a.144.144 0 01.144-.092.16.16 0 01.157.16v2.118a.535.535 0 101.066 0v-1.73a.531.531 0 01.566-.552.52.52 0 01.541.551v1.73a.531.531 0 00.53.593.539.539 0 00.535-.592v-1.73a.531.531 0 01.564-.552.52.52 0 01.543.551v1.73a.531.531 0 00.528.593.535.535 0 00.535-.592v-1.969a1.234 1.234 0 00-1.283-1.23 1.647 1.647 0 00-1.14.486 1.26 1.26 0 00-1.095-.483 1.807 1.807 0 00-1.074.483 1.287 1.287 0 00-.961-.483 1.177 1.177 0 00-1.158.786l-.729 1.716-.933-2.203.011-.004A.505.505 0 00.5 10.1zm18.43.06a.27.27 0 00-.266.274h.002v3.142a.27.27 0 10.535 0v-1.222c0-1.037.571-1.56 1.27-1.643a.266.266 0 00.238-.274.258.258 0 00-.266-.269 1.465 1.465 0 00-1.242.88v-.614a.266.266 0 00-.271-.274zm-6.735.008a.273.273 0 00-.25.217l-.912 2.627-.902-2.62a.28.28 0 00-.274-.22.266.266 0 00-.27.258.493.493 0 00.034.144l1.09 3.037.02-.007a.319.319 0 00.298.242.3.3 0 00.293-.242l.903-2.583.896 2.583a.3.3 0 00.293.242h.018a.319.319 0 00.293-.242l1.097-3.038a.512.512 0 00.033-.144.258.258 0 00-.265-.25.262.262 0 00-.258.209l-.918 2.63-.904-2.626a.285.285 0 00-.278-.217h-.025a.273.273 0 00-.012 0zm10.168.008a1.75 1.75 0 00-1.691 1.851 1.765 1.765 0 001.76 1.858l-.008.013a1.784 1.784 0 001.33-.539.228.228 0 00.082-.17.228.228 0 00-.379-.168 1.435 1.435 0 01-1.018.415 1.237 1.237 0 01-1.24-1.207h2.555a.247.247 0 00.246-.247c0-.945-.593-1.806-1.637-1.806zm-5.744.002a1.571 1.571 0 00-.158.006 2.384 2.384 0 00-1.078.205.22.22 0 00-.143.222.24.24 0 00.235.229.266.266 0 00.095-.024 1.822 1.822 0 01.834-.162c.691 0 1.07.334 1.07.979v.125a3.796 3.796 0 00-1.103-.15c-.892 0-1.52.4-1.52 1.16l-.003-.004c0 .736.671 1.117 1.34 1.117a1.575 1.575 0 001.298-.62v.343a.247.247 0 00.254.25.254.254 0 00.258-.262v-1.983a1.416 1.416 0 00-.379-1.046 1.571 1.571 0 00-1-.385zm5.719.43c.714 0 1.085.565 1.139 1.214h-2.278a1.222 1.222 0 011.139-1.215zm-5.885 1.382a3.75 3.75 0 011.057.153V12.49c0 .57-.539.973-1.2.973-.485 0-.904-.261-.904-.713 0-.467.375-.76 1.047-.76Z"/></svg></span>VMware vSphere</li>
+        <li><span class="integration-icon"><i class="devicon-kubernetes-plain"></i></span>Kubernetes</li>
+      </ul>
+    </div>
+    <div class="integration-col">
+      <h4>Databases</h4>
+      <span class="separator">───────────</span>
+      <ul>
+        <li><span class="integration-icon"><i class="devicon-postgresql-plain"></i></span>PostgreSQL</li>
+        <li><span class="integration-icon"><i class="devicon-mongodb-plain"></i></span>MongoDB</li>
+        <li class="muted">(any via MCP)</li>
+      </ul>
+    </div>
+    <div class="integration-col">
+      <h4>Messengers</h4>
+      <span class="separator">───────────</span>
+      <ul>
+        <li><span class="integration-icon"><i class="devicon-slack-plain"></i></span>Slack</li>
+        <li><span class="integration-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></span>Telegram</li>
+        <li><span class="integration-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M20.625 8.127q-.55 0-1.025-.205-.475-.205-.832-.563-.358-.357-.563-.832Q18 6.053 18 5.502q0-.54.205-1.02t.563-.837q.357-.358.832-.563.474-.205 1.025-.205.54 0 1.02.205t.837.563q.358.357.563.837.205.48.205 1.02 0 .55-.205 1.025-.205.475-.563.832-.357.358-.837.563-.48.205-1.02.205zm0-3.75q-.469 0-.797.328-.328.328-.328.797 0 .469.328.797.328.328.797.328.469 0 .797-.328.328-.328.328-.797 0-.469-.328-.797-.328-.328-.797-.328zM24 10.002v5.578q0 .774-.293 1.46-.293.685-.803 1.194-.51.51-1.195.803-.686.293-1.459.293-.445 0-.908-.105-.463-.106-.85-.329-.293.95-.855 1.729-.563.78-1.319 1.336-.756.557-1.67.861-.914.305-1.898.305-1.148 0-2.162-.398-1.014-.399-1.805-1.102-.79-.703-1.312-1.664t-.674-2.086h-5.8q-.411 0-.704-.293T0 16.881V6.873q0-.41.293-.703t.703-.293h8.59q-.34-.715-.34-1.5 0-.727.275-1.365.276-.639.75-1.114.475-.474 1.114-.75.638-.275 1.365-.275t1.365.275q.639.276 1.114.75.474.475.75 1.114.275.638.275 1.365t-.275 1.365q-.276.639-.75 1.113-.475.475-1.114.75-.638.276-1.365.276-.188 0-.375-.024-.188-.023-.375-.058v1.078h10.875q.469 0 .797.328.328.328.328.797zM12.75 2.373q-.41 0-.78.158-.368.158-.638.434-.27.275-.428.639-.158.363-.158.773 0 .41.158.78.159.368.428.638.27.27.639.428.369.158.779.158.41 0 .773-.158.364-.159.64-.428.274-.27.433-.639.158-.369.158-.779 0-.41-.158-.773-.159-.364-.434-.64-.275-.275-.639-.433-.363-.158-.773-.158zM6.937 9.814h2.25V7.94H2.814v1.875h2.25v6h1.875zm10.313 7.313v-6.75H12v6.504q0 .41-.293.703t-.703.293H8.309q.152.809.556 1.5.405.691.985 1.19.58.497 1.318.779.738.281 1.582.281.926 0 1.746-.352.82-.351 1.436-.966.615-.616.966-1.43.352-.815.352-1.752zm5.25-1.547v-5.203h-3.75v6.855q.305.305.691.452.387.146.809.146.469 0 .879-.176.41-.175.715-.48.304-.305.48-.715t.176-.879Z"/></svg></span>MS Teams</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- Why SherlockOps -->
+<section id="why">
+  <p class="section-label fade-in">Why SherlockOps</p>
+  <h2 class="section-title fade-in">Less noise. More answers.</h2>
+
+  <div class="why-grid">
+    <div class="why-item fade-in">
+      <h3><span>Self-hosted</span></h3>
+      <p>Your data stays yours. Single Docker container, zero SaaS dependencies. Runs in your VPC, behind your firewall.</p>
+    </div>
+    <div class="why-item fade-in">
+      <h3><span>Any LLM</span></h3>
+      <p>Claude, GPT-4, Ollama, vLLM. Bring your own model. Switch providers without changing a line of config.</p>
+    </div>
+    <div class="why-item fade-in">
+      <h3><span>50+ tools</span></h3>
+      <p>From Prometheus to MongoDB, your agent investigates with real data. Not summaries, not guesses — actual queries.</p>
+    </div>
+    <div class="why-item fade-in">
+      <h3><span>MCP native</span></h3>
+      <p>Connect any MCP server. Add new data sources without writing code. The protocol does the plumbing.</p>
+    </div>
+  </div>
+
+  <div class="mcp-section fade-in" style="margin-top: 48px; background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 32px;">
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #22c55e; margin-bottom: 12px;">// connect any MCP server in 3 lines of config</p>
+    <pre style="font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.7; color: #a3e635; margin: 0;"><code>mcp:
+  clients:
+    - name: "k8s-cluster"
+      url: "https://k8s-mcp.your-infra.com/mcp"
+
+    - name: "argocd"
+      url: "https://argo-mcp.your-infra.com/mcp"
+
+    - name: "alertmanager"
+      url: "https://am-mcp.your-infra.com/mcp"
+
+    - name: "custom-tool"
+      url: "http://internal-mcp:3000"
+      auth: "bearer"
+      token: "your-token"</code></pre>
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #525252; margin-top: 16px; margin-bottom: 0;">
+      Any MCP-compatible server becomes a tool for the AI agent. ArgoCD, Alertmanager, Vault, custom APIs —
+      if it speaks MCP, SherlockOps can use it to investigate alerts. No code changes needed.
+    </p>
+  </div>
+</section>
+
+<!-- Quick Start -->
+<section id="quickstart">
+  <p class="section-label fade-in">Quick Start</p>
+  <h2 class="section-title fade-in">Running in 2 minutes.</h2>
+
+  <div class="quickstart-steps">
+    <div class="fade-in">
+      <div class="qs-label">Clone and configure</div>
+      <div class="code-block"><span class="cmd">$</span> git clone https://github.com/Duops/SherlockOps.git
+<span class="cmd">$</span> cd sherlock-ops
+<span class="cmd">$</span> cp .env.example .env   <span class="comment"># add your LLM API key</span>
+<span class="cmd">$</span> docker compose up -d</div>
+    </div>
+
+    <div class="fade-in">
+      <div class="qs-label">Enable your tools in config.yaml</div>
+      <div class="code-block"><span class="key">tools</span>:
+  <span class="key">prometheus</span>:
+    <span class="key">enabled</span>: <span class="value">true</span>
+    <span class="key">url</span>: <span class="string">"http://prometheus:9090"</span>
+  <span class="key">kubernetes</span>:
+    <span class="key">enabled</span>: <span class="value">true</span>
+    <span class="key">kubeconfig</span>: <span class="string">"/root/.kube/config"</span>
+  <span class="key">loki</span>:
+    <span class="key">enabled</span>: <span class="value">true</span>
+    <span class="key">url</span>: <span class="string">"http://loki:3100"</span>
+
+<span class="key">notifications</span>:
+  <span class="key">slack</span>:
+    <span class="key">webhook_url</span>: <span class="string">"https://hooks.slack.com/..."</span></div>
+    </div>
+
+    <div class="fade-in">
+      <div class="qs-label">Point Alertmanager at SherlockOps and you're done.</div>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture -->
+<section id="architecture">
+  <p class="section-label fade-in">Architecture</p>
+  <h2 class="section-title fade-in">What's under the hood.</h2>
+
+  <div class="arch-flow fade-in">
+
+    <div class="arch-row">
+      <div class="arch-box">Alertmanager</div>
+      <div class="arch-box">Grafana</div>
+      <div class="arch-box">Zabbix</div>
+      <div class="arch-box">Datadog</div>
+    </div>
+
+    <div class="arch-arrow">│<br>▼</div>
+
+    <div class="arch-row">
+      <div class="arch-box green" style="min-width: 280px;">
+        SherlockOps API<br>
+        <span class="arch-label">webhook receiver + worker pool</span>
+      </div>
+    </div>
+
+    <div class="arch-arrow">│<br>▼</div>
+
+    <div class="arch-row">
+      <div class="arch-box green" style="min-width: 280px;">
+        LLM Agent<br>
+        <span class="arch-label">Claude · GPT-4 · Ollama · vLLM</span>
+      </div>
+    </div>
+
+    <div class="arch-arrow branch">
+      <span>│</span><span>│</span><span>│</span>
+    </div>
+    <div class="arch-arrow branch" style="padding:0;">
+      <span>▼</span><span>▼</span><span>▼</span>
+    </div>
+
+    <div class="arch-row">
+      <div class="arch-box amber">
+        Prometheus<br>
+        <span class="arch-label">query metrics</span>
+      </div>
+      <div class="arch-box amber">
+        Kubernetes<br>
+        <span class="arch-label">pods · logs · events</span>
+      </div>
+      <div class="arch-box amber">
+        Loki<br>
+        <span class="arch-label">search logs</span>
+      </div>
+      <div class="arch-box amber">
+        Cloud APIs<br>
+        <span class="arch-label">AWS · GCP · Azure · YC · DO</span>
+      </div>
+      <div class="arch-box amber">
+        Databases<br>
+        <span class="arch-label">PostgreSQL · MongoDB</span>
+      </div>
+      <div class="arch-box amber">
+        MCP<br>
+        <span class="arch-label">any MCP server</span>
+      </div>
+    </div>
+
+    <div class="arch-arrow branch" style="padding-top:12px;">
+      <span>│</span><span>│</span><span>│</span>
+    </div>
+    <div class="arch-arrow">▼</div>
+
+    <div class="arch-row">
+      <div class="arch-box green" style="min-width: 280px;">
+        Diagnosis<br>
+        <span class="arch-label">root cause + actionable steps</span>
+      </div>
+    </div>
+
+    <div class="arch-arrow branch">
+      <span>│</span><span>│</span><span>│</span>
+    </div>
+    <div class="arch-arrow branch" style="padding:0;">
+      <span>▼</span><span>▼</span><span>▼</span>
+    </div>
+
+    <div class="arch-row">
+      <div class="arch-box green">
+        Slack<br>
+        <span class="arch-label">thread reply</span>
+      </div>
+      <div class="arch-box green">
+        Telegram<br>
+        <span class="arch-label">edit message</span>
+      </div>
+      <div class="arch-box green">
+        Teams<br>
+        <span class="arch-label">update card</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- Footer -->
+<footer style="background: #111; border-top: 1px solid #1a1a1a; padding: 48px 24px 32px;">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="nav-logo" style="margin-bottom: 8px;">Sherlock<span>Ops</span></div>
+        <p>Your alerts deserve a detective.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Duops/SherlockOps#readme" target="_blank" rel="noopener">Documentation</a></li>
+          <li><a href="#quickstart">Quick Start</a></li>
+          <li><a href="https://github.com/Duops/SherlockOps/blob/main/docs/configuration.md" target="_blank" rel="noopener">Configuration</a></li>
+          <li><a href="https://github.com/Duops/SherlockOps/blob/main/docs/api.md" target="_blank" rel="noopener">API Reference</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Community</h5>
+        <ul>
+          <li><a href="https://github.com/Duops/SherlockOps" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://t.me/sherlockops" target="_blank" rel="noopener">Telegram Chat</a></li>
+          <li><a href="https://discord.gg/sherlockops" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="https://x.com/sherlockops" target="_blank" rel="noopener">Twitter/X</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      MIT License &middot; Made for on-call engineers
+    </div>
+  </div>
+</footer>
+
+<script>
+// Terminal typing animation
+(function() {
+  const lines = [
+    { text: '$ alert received: HighCPU [prod] severity=critical', cls: 'cmd' },
+    { text: '  \u21b3 querying prometheus... ', cls: 'dim', suffix: '\u2713 cpu_usage: 94.2%', suffixCls: 'green' },
+    { text: '  \u21b3 checking k8s pods...   ', cls: 'dim', suffix: '\u2713 3 restarts in 10m', suffixCls: 'green' },
+    { text: '  \u21b3 fetching loki logs...  ', cls: 'dim', suffix: '\u2713 OOMKilled detected', suffixCls: 'green' },
+    { text: '', cls: 'dim' },
+    { text: '\ud83d\udd34 Diagnosis: Memory leak in payment-service causing OOM', cls: 'red' },
+    { text: '   \u2192 Scale memory limit from 512Mi to 1Gi', cls: 'amber' },
+    { text: '   \u2192 Check commit abc123 (deployed 2h ago)', cls: 'amber' },
+  ];
+
+  const terminal = document.getElementById('hero-terminal');
+  let lineIndex = 0;
+  let charIndex = 0;
+  let currentText = '';
+  let phase = 'main'; // 'main' or 'suffix'
+
+  function type() {
+    if (lineIndex >= lines.length) {
+      terminal.innerHTML += '<span class="cursor"></span>';
+      return;
+    }
+
+    const line = lines[lineIndex];
+
+    if (phase === 'main') {
+      if (charIndex < line.text.length) {
+        currentText += line.text[charIndex];
+        charIndex++;
+        render();
+        setTimeout(type, line.text === '' ? 0 : 12 + Math.random() * 8);
+        return;
+      }
+      if (line.suffix) {
+        phase = 'suffix';
+        charIndex = 0;
+        setTimeout(type, 300);
+        return;
+      }
+    }
+
+    if (phase === 'suffix') {
+      if (charIndex < line.suffix.length) {
+        currentText += line.suffix[charIndex];
+        charIndex++;
+        render();
+        setTimeout(type, 8);
+        return;
+      }
+    }
+
+    // Line complete
+    currentText += '\n';
+    lineIndex++;
+    charIndex = 0;
+    phase = 'main';
+
+    if (lineIndex === 4) {
+      setTimeout(type, 400);
+    } else if (lineIndex === 5) {
+      setTimeout(type, 200);
+    } else {
+      setTimeout(type, lineIndex === 0 ? 0 : 80);
+    }
+  }
+
+  function render() {
+    let html = '';
+    let pos = 0;
+    for (let i = 0; i < lineIndex; i++) {
+      const l = lines[i];
+      html += '<span class="' + l.cls + '">' + escapeHtml(l.text) + '</span>';
+      if (l.suffix) {
+        html += '<span class="' + l.suffixCls + '">' + escapeHtml(l.suffix) + '</span>';
+      }
+      html += '\n';
+      pos += l.text.length + (l.suffix ? l.suffix.length : 0) + 1;
+    }
+
+    // Current line in progress
+    const cl = lines[lineIndex];
+    if (phase === 'main') {
+      html += '<span class="' + cl.cls + '">' + escapeHtml(currentText.slice(pos)) + '</span>';
+    } else {
+      html += '<span class="' + cl.cls + '">' + escapeHtml(cl.text) + '</span>';
+      const suffixSoFar = currentText.slice(pos + cl.text.length);
+      html += '<span class="' + cl.suffixCls + '">' + escapeHtml(suffixSoFar) + '</span>';
+    }
+
+    html += '<span class="cursor"></span>';
+    terminal.innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  setTimeout(type, 600);
+})();
+
+// Intersection Observer for fade-in
+(function() {
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.fade-in').forEach(function(el) {
+    observer.observe(el);
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SherlockOps</title>
+    <link rel="stylesheet" href="/ui/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SherlockOps</h1>
+            <div class="health-indicator">
+                <span id="health-dot" class="health-dot"></span>
+                <span id="health-text">Checking...</span>
+                <span class="refresh-info">Auto-refresh: 30s</span>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="label">Total Analyzed</div>
+                <div class="value" id="stat-total">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Resolved</div>
+                <div class="value" id="stat-resolved">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Active Alerts</div>
+                <div class="value" id="stat-active">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Analysis Length</div>
+                <div class="value" id="stat-avg-length">-</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <input type="text" id="search-name" placeholder="Search alerts...">
+            <select id="filter-source">
+                <option value="">All Sources</option>
+            </select>
+            <select id="filter-severity">
+                <option value="">All Severities</option>
+                <option value="critical">Critical</option>
+                <option value="warning">Warning</option>
+                <option value="info">Info</option>
+            </select>
+            <select id="filter-status">
+                <option value="">All Statuses</option>
+                <option value="firing">Firing</option>
+                <option value="resolved">Resolved</option>
+            </select>
+        </div>
+
+        <table class="alert-table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Source</th>
+                    <th>Fingerprint</th>
+                    <th>Severity</th>
+                    <th>Status</th>
+                    <th>Tools Used</th>
+                </tr>
+            </thead>
+            <tbody id="alerts-body">
+                <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script src="/ui/static/app.js"></script>
+</body>
+</html>

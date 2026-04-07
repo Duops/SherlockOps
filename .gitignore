@@ -1,0 +1,31 @@
+# Secrets
+.env
+config.yaml
+
+# Build
+bin/
+src/*.test
+src/coverage.out
+
+# Data
+/data/
+*.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Not part of project
+CLAUDE.md
+.claude/
+.claude-flow/
+.swarm/
+.hive-mind/
+.mcp.json
