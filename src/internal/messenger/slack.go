@@ -591,32 +591,59 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 	}
 
 	evt := payload.Event
+
+	// Log every incoming event at debug for diagnostics. Keep the text to a
+	// short preview to avoid leaking sensitive content in logs.
+	textPreview := evt.Text
+	if len(textPreview) > 120 {
+		textPreview = textPreview[:120] + "…"
+	}
+	s.logger.Debug("slack event received",
+		slog.String("type", evt.Type),
+		slog.String("subtype", evt.SubType),
+		slog.String("channel", evt.Channel),
+		slog.String("user", evt.User),
+		slog.String("ts", evt.TS),
+		slog.String("thread_ts", evt.ThreadTS),
+		slog.String("bot_id", evt.BotID),
+		slog.String("text", textPreview),
+	)
+
 	// We care about two event families:
 	//   - "message"     : regular channel/thread messages (requires message.* subscriptions + channels:history)
 	//   - "app_mention" : explicit @bot mentions (requires app_mentions:read)
 	// The former is what carries alert posts from Alertmanager-Slack integrations;
 	// the latter is the reliable path for "@bot analyze" on manual mode.
 	if evt.Type != "message" && evt.Type != "app_mention" {
+		s.logger.Debug("slack event ignored: unhandled type", slog.String("type", evt.Type))
 		return
 	}
 
 	// Skip bot's own messages, message_changed, message_deleted.
 	if evt.SubType == "message_changed" || evt.SubType == "message_deleted" {
+		s.logger.Debug("slack event ignored: edit/delete subtype", slog.String("subtype", evt.SubType))
 		return
 	}
 	if evt.BotID != "" {
+		s.logger.Debug("slack event ignored: from another bot", slog.String("bot_id", evt.BotID))
 		return
 	}
 	if s.botUserID != "" && evt.User == s.botUserID {
+		s.logger.Debug("slack event ignored: from self")
 		return
 	}
 
 	// Check if channel is in listen list.
 	if !s.isListenChannel(evt.Channel) {
+		s.logger.Info("slack event ignored: channel not in listen_channels",
+			slog.String("channel", evt.Channel),
+			slog.Any("listen_channels", s.listenChannels),
+		)
 		return
 	}
 
 	if s.handler == nil {
+		s.logger.Warn("slack event dropped: no handler registered")
 		return
 	}
 
@@ -625,6 +652,11 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 	// to resolve the pending alert. For top-level mentions ThreadTS is empty
 	// and mention resolution will fall through to the default mention flow.
 	if evt.Type == "app_mention" {
+		s.logger.Info("slack: handling app_mention",
+			slog.String("channel", evt.Channel),
+			slog.String("thread_ts", evt.ThreadTS),
+			slog.Bool("is_thread_reply", evt.ThreadTS != ""),
+		)
 		s.handleBotMention(ctx, evt)
 		return
 	}
@@ -633,11 +665,16 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 	// contains an explicit <@BOTID> token. Otherwise treat it as an alert
 	// posted by another integration (Alertmanager-Slack, etc.).
 	if s.botUserID != "" && strings.Contains(evt.Text, "<@"+s.botUserID+">") && evt.ThreadTS != "" {
+		s.logger.Info("slack: handling mention inside thread message",
+			slog.String("channel", evt.Channel),
+			slog.String("thread_ts", evt.ThreadTS),
+		)
 		s.handleBotMention(ctx, evt)
 		return
 	}
 
 	// Treat as an alert message from Alertmanager bot or similar.
+	s.logger.Debug("slack: treating message as alert", slog.String("channel", evt.Channel))
 	s.handleAlertMessage(evt)
 }
 
