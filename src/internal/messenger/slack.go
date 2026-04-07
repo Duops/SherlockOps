@@ -591,7 +591,12 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 	}
 
 	evt := payload.Event
-	if evt.Type != "message" {
+	// We care about two event families:
+	//   - "message"     : regular channel/thread messages (requires message.* subscriptions + channels:history)
+	//   - "app_mention" : explicit @bot mentions (requires app_mentions:read)
+	// The former is what carries alert posts from Alertmanager-Slack integrations;
+	// the latter is the reliable path for "@bot analyze" on manual mode.
+	if evt.Type != "message" && evt.Type != "app_mention" {
 		return
 	}
 
@@ -615,7 +620,18 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 		return
 	}
 
-	// Check for @bot mention in a thread.
+	// app_mention always means "user pinged the bot" — handle it as a mention.
+	// For thread replies, evt.ThreadTS holds the root message ts, which we use
+	// to resolve the pending alert. For top-level mentions ThreadTS is empty
+	// and mention resolution will fall through to the default mention flow.
+	if evt.Type == "app_mention" {
+		s.handleBotMention(ctx, evt)
+		return
+	}
+
+	// "message" event: treat as a mention only if it is a thread reply AND
+	// contains an explicit <@BOTID> token. Otherwise treat it as an alert
+	// posted by another integration (Alertmanager-Slack, etc.).
 	if s.botUserID != "" && strings.Contains(evt.Text, "<@"+s.botUserID+">") && evt.ThreadTS != "" {
 		s.handleBotMention(ctx, evt)
 		return
