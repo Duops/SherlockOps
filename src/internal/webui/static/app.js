@@ -30,6 +30,15 @@ document.addEventListener('DOMContentLoaded', function () {
             var active = (data.total_count || 0) - (data.resolved_count || 0);
             document.getElementById('stat-active').textContent = active >= 0 ? active : 0;
             document.getElementById('stat-avg-length').textContent = Math.round(data.avg_text_length || 0);
+
+            var cost = data.total_cost_usd || 0;
+            var costStr = '-';
+            if (cost > 0) {
+                if (cost < 0.01) costStr = '$' + cost.toFixed(4);
+                else if (cost < 1) costStr = '$' + cost.toFixed(3);
+                else costStr = '$' + cost.toFixed(2);
+            }
+            document.getElementById('stat-total-cost').textContent = costStr;
         }).catch(function () {
             // stats unavailable
         });
@@ -120,10 +129,10 @@ document.addEventListener('DOMContentLoaded', function () {
         return 'info';
     }
 
-    // formatToolsTrace mirrors formatToolsTraceFromResult() in Go:
-    // renders a compact "kubernetes ✓(5)  victoriametrics ✓(5)" trace, and
-    // appends " | 33.1k tokens ~$0.118" when token/cost data is available.
-    function formatToolsTrace(alert) {
+    // formatToolsOnly renders just the grouped tools trace without tokens/cost:
+    // "kubernetes ✓(5)  victoriametrics ✓(5)". Tokens and cost are shown in
+    // their own dedicated columns in the dashboard.
+    function formatToolsOnly(alert) {
         var parts = [];
         var trace = alert.tools_trace;
         if (trace && trace.length > 0) {
@@ -136,7 +145,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             });
         } else if (alert.tools_used && alert.tools_used.length > 0) {
-            // Fallback: group by "<category>_<rest>" prefix, like cached results.
             var counts = {};
             alert.tools_used.forEach(function (t) {
                 var cat = t.indexOf('_') >= 0 ? t.split('_')[0] : t;
@@ -146,15 +154,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 parts.push(cat + ' \u2713(' + counts[cat] + ')');
             });
         }
-        if (parts.length === 0) return '-';
-        var out = parts.join('  ');
-        if (alert.total_tokens && alert.total_tokens > 0) {
-            out += ' | ' + formatTokenCount(alert.total_tokens) + ' tokens';
-            if (alert.cost_usd && alert.cost_usd > 0) {
-                out += ' ' + formatCost(alert.cost_usd);
-            }
-        }
-        return out;
+        return parts.length > 0 ? parts.join('  ') : '-';
     }
 
     function formatTokenCount(n) {
@@ -171,8 +171,16 @@ document.addEventListener('DOMContentLoaded', function () {
     function renderAlerts() {
         var filtered = state.alerts.filter(matchesFilters);
 
+        // Always sort by timestamp DESC — newest first — regardless of the
+        // order the API returned (pending stubs may be interleaved).
+        filtered.sort(function (a, b) {
+            var ta = a.cached_at ? Date.parse(a.cached_at) : 0;
+            var tb = b.cached_at ? Date.parse(b.cached_at) : 0;
+            return tb - ta;
+        });
+
         if (filtered.length === 0) {
-            alertsBody.innerHTML = '<tr><td colspan="7" class="empty-state">No alerts found</td></tr>';
+            alertsBody.innerHTML = '<tr><td colspan="8" class="empty-state">No alerts found</td></tr>';
             return;
         }
 
@@ -182,7 +190,8 @@ document.addEventListener('DOMContentLoaded', function () {
             var severity = alert.severity || extractSeverity(alert);
             var status = isResolved ? 'resolved' : 'firing';
             var expanded = state.expandedFingerprint === alert.alert_fingerprint;
-            var toolsStr = formatToolsTrace(alert);
+            var toolsStr = formatToolsOnly(alert);
+            var tokensStr = alert.total_tokens > 0 ? formatTokenCount(alert.total_tokens) : '-';
             var costStr = formatCost(alert.cost_usd) || '-';
 
             html += '<tr onclick="toggleAlert(\'' + escapeHtml(alert.alert_fingerprint) + '\')">';
@@ -192,11 +201,12 @@ document.addEventListener('DOMContentLoaded', function () {
             html += '<td><span class="severity-badge severity-' + severity + '">' + severity + '</span></td>';
             html += '<td><span class="status-badge status-' + status + '">' + status + '</span></td>';
             html += '<td class="fingerprint">' + escapeHtml(toolsStr) + '</td>';
+            html += '<td>' + escapeHtml(tokensStr) + '</td>';
             html += '<td>' + escapeHtml(costStr) + '</td>';
             html += '</tr>';
 
             if (expanded) {
-                html += '<tr class="analysis-row"><td colspan="7">';
+                html += '<tr class="analysis-row"><td colspan="8">';
                 html += '<div class="analysis-content">' + escapeHtml(alert.text) + '</div>';
                 html += '</td></tr>';
             }

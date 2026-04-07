@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Duops/SherlockOps/internal/domain"
+	"github.com/Duops/SherlockOps/internal/pricing"
 
 	_ "modernc.org/sqlite"
 )
@@ -50,27 +51,43 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 	db.SetMaxOpenConns(1)
 
 	createSQL := `CREATE TABLE IF NOT EXISTS alerts_cache (
-		fingerprint  TEXT PRIMARY KEY,
-		analysis_text TEXT,
-		tools_used   TEXT,
-		created_at   TEXT,
-		resolved_at  TEXT,
-		source       TEXT DEFAULT '',
-		severity     TEXT DEFAULT '',
-		alert_name   TEXT DEFAULT ''
+		fingerprint       TEXT PRIMARY KEY,
+		analysis_text     TEXT,
+		tools_used        TEXT,
+		created_at        TEXT,
+		resolved_at       TEXT,
+		source            TEXT DEFAULT '',
+		severity          TEXT DEFAULT '',
+		alert_name        TEXT DEFAULT '',
+		model             TEXT DEFAULT '',
+		input_tokens      INTEGER DEFAULT 0,
+		output_tokens     INTEGER DEFAULT 0,
+		total_tokens      INTEGER DEFAULT 0,
+		iterations        INTEGER DEFAULT 0,
+		input_token_cost  REAL DEFAULT 0,
+		output_token_cost REAL DEFAULT 0,
+		tools_trace       TEXT DEFAULT ''
 	)`
 	if _, err := db.Exec(createSQL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cache: create table: %w", err)
 	}
 	// Online migration for pre-existing installations: add columns if the
-	// table was created before source/severity/alert_name were introduced.
-	// SQLite's ADD COLUMN is idempotent-friendly via "column already exists"
-	// error which we silently tolerate.
+	// table was created before source/severity/alert_name/tokens/cost were
+	// introduced. SQLite ADD COLUMN returns "duplicate column name" when the
+	// column already exists — we silently tolerate that.
 	for _, col := range []string{
 		"ALTER TABLE alerts_cache ADD COLUMN source TEXT DEFAULT ''",
 		"ALTER TABLE alerts_cache ADD COLUMN severity TEXT DEFAULT ''",
 		"ALTER TABLE alerts_cache ADD COLUMN alert_name TEXT DEFAULT ''",
+		"ALTER TABLE alerts_cache ADD COLUMN model TEXT DEFAULT ''",
+		"ALTER TABLE alerts_cache ADD COLUMN input_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE alerts_cache ADD COLUMN output_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE alerts_cache ADD COLUMN total_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE alerts_cache ADD COLUMN iterations INTEGER DEFAULT 0",
+		"ALTER TABLE alerts_cache ADD COLUMN input_token_cost REAL DEFAULT 0",
+		"ALTER TABLE alerts_cache ADD COLUMN output_token_cost REAL DEFAULT 0",
+		"ALTER TABLE alerts_cache ADD COLUMN tools_trace TEXT DEFAULT ''",
 	} {
 		_, _ = db.Exec(col) // ignore "duplicate column name" errors
 	}
@@ -99,20 +116,35 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 // Get returns a cached analysis result or nil if not found or expired.
 func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.AnalysisResult, error) {
 	row := c.db.QueryRowContext(ctx,
-		"SELECT analysis_text, tools_used, created_at, resolved_at, source, severity, alert_name FROM alerts_cache WHERE fingerprint = ?",
+		`SELECT analysis_text, tools_used, created_at, resolved_at,
+		        source, severity, alert_name,
+		        model, input_tokens, output_tokens, total_tokens, iterations,
+		        input_token_cost, output_token_cost, tools_trace
+		 FROM alerts_cache WHERE fingerprint = ?`,
 		fingerprint,
 	)
 
 	var (
-		text        string
-		toolsRaw    string
-		createdRaw  string
-		resolvedRaw sql.NullString
-		source      sql.NullString
-		severity    sql.NullString
-		alertName   sql.NullString
+		text         string
+		toolsRaw     string
+		createdRaw   string
+		resolvedRaw  sql.NullString
+		source       sql.NullString
+		severity     sql.NullString
+		alertName    sql.NullString
+		model        sql.NullString
+		inputTokens  sql.NullInt64
+		outputTokens sql.NullInt64
+		totalTokens  sql.NullInt64
+		iterations   sql.NullInt64
+		inCost       sql.NullFloat64
+		outCost      sql.NullFloat64
+		traceRaw     sql.NullString
 	)
-	if err := row.Scan(&text, &toolsRaw, &createdRaw, &resolvedRaw, &source, &severity, &alertName); err != nil {
+	if err := row.Scan(&text, &toolsRaw, &createdRaw, &resolvedRaw,
+		&source, &severity, &alertName,
+		&model, &inputTokens, &outputTokens, &totalTokens, &iterations,
+		&inCost, &outCost, &traceRaw); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -135,10 +167,24 @@ func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.Anal
 		Source:           source.String,
 		Severity:         severity.String,
 		AlertName:        alertName.String,
+		Model:            model.String,
+		InputTokens:      int(inputTokens.Int64),
+		OutputTokens:     int(outputTokens.Int64),
+		TotalTokens:      int(totalTokens.Int64),
+		Iterations:       int(iterations.Int64),
+		InputTokenCost:   inCost.Float64,
+		OutputTokenCost:  outCost.Float64,
 	}
 
 	if toolsRaw != "" {
 		result.ToolsUsed = strings.Split(toolsRaw, ",")
+	}
+
+	if traceRaw.Valid && traceRaw.String != "" {
+		var trace []domain.ToolTraceEntry
+		if err := json.Unmarshal([]byte(traceRaw.String), &trace); err == nil {
+			result.ToolsTrace = trace
+		}
 	}
 
 	if resolvedRaw.Valid && resolvedRaw.String != "" {
@@ -158,20 +204,41 @@ func (c *SQLiteCache) Set(ctx context.Context, result *domain.AnalysisResult) er
 	}
 
 	toolsStr := strings.Join(result.ToolsUsed, ",")
+	traceJSON := ""
+	if len(result.ToolsTrace) > 0 {
+		if data, err := json.Marshal(result.ToolsTrace); err == nil {
+			traceJSON = string(data)
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO alerts_cache (fingerprint, analysis_text, tools_used, created_at, resolved_at, source, severity, alert_name)
-		 VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
+		`INSERT INTO alerts_cache (
+		   fingerprint, analysis_text, tools_used, created_at, resolved_at,
+		   source, severity, alert_name,
+		   model, input_tokens, output_tokens, total_tokens, iterations,
+		   input_token_cost, output_token_cost, tools_trace
+		 )
+		 VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(fingerprint) DO UPDATE SET
-		   analysis_text = excluded.analysis_text,
-		   tools_used    = excluded.tools_used,
-		   created_at    = excluded.created_at,
-		   source        = excluded.source,
-		   severity      = excluded.severity,
-		   alert_name    = excluded.alert_name`,
+		   analysis_text     = excluded.analysis_text,
+		   tools_used        = excluded.tools_used,
+		   created_at        = excluded.created_at,
+		   source            = excluded.source,
+		   severity          = excluded.severity,
+		   alert_name        = excluded.alert_name,
+		   model             = excluded.model,
+		   input_tokens      = excluded.input_tokens,
+		   output_tokens     = excluded.output_tokens,
+		   total_tokens      = excluded.total_tokens,
+		   iterations        = excluded.iterations,
+		   input_token_cost  = excluded.input_token_cost,
+		   output_token_cost = excluded.output_token_cost,
+		   tools_trace       = excluded.tools_trace`,
 		result.AlertFingerprint, result.Text, toolsStr, now,
 		result.Source, result.Severity, result.AlertName,
+		result.Model, result.InputTokens, result.OutputTokens, result.TotalTokens, result.Iterations,
+		result.InputTokenCost, result.OutputTokenCost, traceJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("cache: set: %w", err)
@@ -208,7 +275,11 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 	}
 
 	rows, err := c.db.QueryContext(ctx,
-		"SELECT fingerprint, analysis_text, tools_used, created_at, resolved_at, source, severity, alert_name FROM alerts_cache ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		`SELECT fingerprint, analysis_text, tools_used, created_at, resolved_at,
+		        source, severity, alert_name,
+		        model, input_tokens, output_tokens, total_tokens, iterations,
+		        input_token_cost, output_token_cost, tools_trace
+		 FROM alerts_cache ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		limit, offset,
 	)
 	if err != nil {
@@ -219,16 +290,27 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 	var results []*domain.AnalysisResult
 	for rows.Next() {
 		var (
-			fingerprint string
-			text        string
-			toolsRaw    string
-			createdRaw  string
-			resolvedRaw sql.NullString
-			source      sql.NullString
-			severity    sql.NullString
-			alertName   sql.NullString
+			fingerprint  string
+			text         string
+			toolsRaw     string
+			createdRaw   string
+			resolvedRaw  sql.NullString
+			source       sql.NullString
+			severity     sql.NullString
+			alertName    sql.NullString
+			model        sql.NullString
+			inputTokens  sql.NullInt64
+			outputTokens sql.NullInt64
+			totalTokens  sql.NullInt64
+			iterations   sql.NullInt64
+			inCost       sql.NullFloat64
+			outCost      sql.NullFloat64
+			traceRaw     sql.NullString
 		)
-		if err := rows.Scan(&fingerprint, &text, &toolsRaw, &createdRaw, &resolvedRaw, &source, &severity, &alertName); err != nil {
+		if err := rows.Scan(&fingerprint, &text, &toolsRaw, &createdRaw, &resolvedRaw,
+			&source, &severity, &alertName,
+			&model, &inputTokens, &outputTokens, &totalTokens, &iterations,
+			&inCost, &outCost, &traceRaw); err != nil {
 			return nil, 0, fmt.Errorf("cache: list scan: %w", err)
 		}
 
@@ -238,6 +320,13 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 			Source:           source.String,
 			Severity:         severity.String,
 			AlertName:        alertName.String,
+			Model:            model.String,
+			InputTokens:      int(inputTokens.Int64),
+			OutputTokens:     int(outputTokens.Int64),
+			TotalTokens:      int(totalTokens.Int64),
+			Iterations:       int(iterations.Int64),
+			InputTokenCost:   inCost.Float64,
+			OutputTokenCost:  outCost.Float64,
 		}
 
 		if createdAt, err := time.Parse(time.RFC3339, createdRaw); err == nil {
@@ -246,6 +335,13 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 
 		if toolsRaw != "" {
 			result.ToolsUsed = strings.Split(toolsRaw, ",")
+		}
+
+		if traceRaw.Valid && traceRaw.String != "" {
+			var trace []domain.ToolTraceEntry
+			if err := json.Unmarshal([]byte(traceRaw.String), &trace); err == nil {
+				result.ToolsTrace = trace
+			}
 		}
 
 		if resolvedRaw.Valid && resolvedRaw.String != "" {
@@ -272,11 +368,41 @@ func (c *SQLiteCache) Stats(ctx context.Context) (*domain.CacheStats, error) {
 		`SELECT
 			COUNT(*),
 			COUNT(CASE WHEN resolved_at IS NOT NULL AND resolved_at != '' THEN 1 END),
-			COALESCE(AVG(LENGTH(analysis_text)), 0)
+			COALESCE(AVG(LENGTH(analysis_text)), 0),
+			COALESCE(SUM(total_tokens), 0)
 		FROM alerts_cache`,
-	).Scan(&stats.TotalCount, &stats.ResolvedCount, &stats.AvgTextLength)
+	).Scan(&stats.TotalCount, &stats.ResolvedCount, &stats.AvgTextLength, &stats.TotalTokens)
 	if err != nil {
 		return nil, fmt.Errorf("cache: stats: %w", err)
+	}
+
+	// Cost lookup depends on per-row model name, so SQL can't compute it
+	// purely. Stream model/tokens/cost rows and sum via pricing.EstimateCost.
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT model, input_tokens, output_tokens, input_token_cost, output_token_cost
+		 FROM alerts_cache`)
+	if err != nil {
+		return nil, fmt.Errorf("cache: stats cost query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			model   sql.NullString
+			inTok   sql.NullInt64
+			outTok  sql.NullInt64
+			inCost  sql.NullFloat64
+			outCost sql.NullFloat64
+		)
+		if err := rows.Scan(&model, &inTok, &outTok, &inCost, &outCost); err != nil {
+			return nil, fmt.Errorf("cache: stats cost scan: %w", err)
+		}
+		stats.TotalCostUSD += pricing.EstimateCost(
+			model.String, int(inTok.Int64), int(outTok.Int64),
+			inCost.Float64, outCost.Float64,
+		)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cache: stats cost iter: %w", err)
 	}
 
 	return &stats, nil
