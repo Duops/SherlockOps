@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"io/fs"
@@ -8,15 +9,29 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Duops/SherlockOps/internal/domain"
 )
 
+// PendingLister surfaces manual-mode alerts that have been received but not
+// yet analyzed, so the dashboard can show them alongside analyzed entries.
+type PendingLister interface {
+	ListPending(ctx context.Context, limit int) ([]PendingItem, error)
+}
+
+// PendingItem is a minimal projection of a pending alert for the dashboard.
+type PendingItem struct {
+	Alert     *domain.Alert
+	CreatedAt time.Time
+}
+
 // Handler serves the web UI dashboard.
 type Handler struct {
-	cache  domain.Cache
-	logger *slog.Logger
-	tmpl   *template.Template
+	cache   domain.Cache
+	pending PendingLister
+	logger  *slog.Logger
+	tmpl    *template.Template
 }
 
 // New creates a Handler with the given cache and logger.
@@ -27,6 +42,11 @@ func New(cache domain.Cache, logger *slog.Logger) *Handler {
 		logger: logger,
 		tmpl:   tmpl,
 	}
+}
+
+// SetPendingLister wires the source of unanalyzed manual-mode alerts.
+func (h *Handler) SetPendingLister(p PendingLister) {
+	h.pending = p
 }
 
 // RegisterRoutes adds the dashboard routes to the given ServeMux.
@@ -70,12 +90,59 @@ func (h *Handler) apiAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Merge in manual-mode pending alerts (received but not yet analyzed),
+	// deduped by fingerprint against the analyzed cache.
+	merged := results
+	pendingCount := 0
+	if h.pending != nil {
+		pendingItems, perr := h.pending.ListPending(ctx, limit)
+		if perr != nil {
+			h.logger.Warn("list pending alerts", "error", perr)
+		} else {
+			seen := make(map[string]struct{}, len(results))
+			for _, r := range results {
+				if r != nil {
+					seen[r.AlertFingerprint] = struct{}{}
+				}
+			}
+			for _, it := range pendingItems {
+				if it.Alert == nil {
+					continue
+				}
+				if _, dup := seen[it.Alert.Fingerprint]; dup {
+					continue
+				}
+				stub := pendingToStub(it)
+				merged = append(merged, stub)
+				pendingCount++
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"alerts": results,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+		"alerts":  merged,
+		"total":   total + pendingCount,
+		"pending": pendingCount,
+		"limit":   limit,
+		"offset":  offset,
 	})
+}
+
+// pendingToStub converts a pending entry into an AnalysisResult-shaped object
+// so the dashboard can render it in the same table. Text holds the raw alert
+// payload as a placeholder until analysis is requested via @bot mention.
+func pendingToStub(it PendingItem) *domain.AnalysisResult {
+	a := it.Alert
+	text := a.RawText
+	if text == "" {
+		text = "(awaiting @bot analyze — alert received in manual mode)"
+	}
+	return &domain.AnalysisResult{
+		AlertFingerprint: a.Fingerprint,
+		Text:             text,
+		ToolsUsed:        nil,
+		CachedAt:         it.CreatedAt,
+	}
 }
 
 func (h *Handler) apiAlert(w http.ResponseWriter, r *http.Request) {

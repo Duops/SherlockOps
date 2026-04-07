@@ -309,6 +309,47 @@ func (c *SQLiteCache) GetPending(ctx context.Context, messenger, channel, messag
 	return &alert, nil
 }
 
+// PendingEntry pairs a stored alert with its insertion time, for listing in
+// the dashboard.
+type PendingEntry struct {
+	Alert     *domain.Alert
+	CreatedAt time.Time
+}
+
+// ListPending returns pending entries ordered by created_at DESC. Used by the
+// dashboard to surface manual-mode alerts that have not been analyzed yet.
+func (c *SQLiteCache) ListPending(ctx context.Context, limit int) ([]PendingEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := c.db.QueryContext(ctx,
+		"SELECT alert_json, created_at FROM pending_alerts ORDER BY created_at DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cache: ListPending: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PendingEntry
+	for rows.Next() {
+		var (
+			data       string
+			createdRaw string
+		)
+		if err := rows.Scan(&data, &createdRaw); err != nil {
+			return nil, fmt.Errorf("cache: ListPending scan: %w", err)
+		}
+		var a domain.Alert
+		if err := json.Unmarshal([]byte(data), &a); err != nil {
+			continue
+		}
+		t, _ := time.Parse(time.RFC3339, createdRaw)
+		out = append(out, PendingEntry{Alert: &a, CreatedAt: t})
+	}
+	return out, rows.Err()
+}
+
 // CleanupPending removes pending alert entries older than the cutoff and
 // returns the number of rows deleted. Run periodically to keep the table bounded.
 func (c *SQLiteCache) CleanupPending(ctx context.Context, olderThan time.Time) (int64, error) {

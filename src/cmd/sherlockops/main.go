@@ -222,6 +222,7 @@ func main() {
 
 	// 9a. Web UI dashboard.
 	dashboard := webui.New(sqliteCache, logger)
+	dashboard.SetPendingLister(pendingListerAdapter{c: sqliteCache})
 	dashboard.RegisterRoutes(mux)
 
 	// 10. Middleware chain: Recovery -> RequestID -> router.
@@ -438,6 +439,24 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 	}
 
 	return registry
+}
+
+// pendingListerAdapter adapts cache.SQLiteCache.ListPending to the
+// webui.PendingLister interface (different value types).
+type pendingListerAdapter struct {
+	c *cache.SQLiteCache
+}
+
+func (a pendingListerAdapter) ListPending(ctx context.Context, limit int) ([]webui.PendingItem, error) {
+	entries, err := a.c.ListPending(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]webui.PendingItem, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, webui.PendingItem{Alert: e.Alert, CreatedAt: e.CreatedAt})
+	}
+	return out, nil
 }
 
 // startPendingJanitor periodically deletes pending_alerts entries older than
