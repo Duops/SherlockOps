@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -119,6 +120,15 @@ func (h *Handler) apiAlerts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Sort the merged list by timestamp DESC so the dashboard always shows
+	// newest first regardless of where each row came from (analyzed cache or
+	// pending store). cache.List already orders analyzed entries by
+	// created_at DESC, but pending items are appended separately and need
+	// to be interleaved.
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].CachedAt.After(merged[j].CachedAt)
+	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"alerts":  toAPIAlerts(merged),

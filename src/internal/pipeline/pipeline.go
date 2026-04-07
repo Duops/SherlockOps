@@ -223,15 +223,17 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 }
 
 // isSyntheticMention reports whether the alert was synthesized by a messenger
-// listener from a bare @bot mention with no corresponding pending alert. These
-// alerts are user-driven, ephemeral, and have no stable fingerprint — we must
-// not cache them.
+// listener from a bare user interaction (@bot mention in Slack, /analyze
+// command in Telegram, reply in Telegram/Teams) that has no corresponding
+// pending alert. These alerts are user-driven, ephemeral, and have no stable
+// fingerprint — we must not cache them, and must not feed them to the LLM
+// with empty context (it hallucinates by running random tools).
 func isSyntheticMention(alert *domain.Alert) bool {
 	if alert == nil {
 		return false
 	}
 	switch alert.Name {
-	case "thread-mention", "teams-mention":
+	case "thread-mention", "teams-mention", "telegram-command", "telegram-reply":
 		return true
 	}
 	return false

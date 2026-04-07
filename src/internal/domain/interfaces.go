@@ -64,6 +64,8 @@ type CacheStats struct {
 	TotalCount    int     `json:"total_count"`
 	ResolvedCount int     `json:"resolved_count"`
 	AvgTextLength float64 `json:"avg_text_length"`
+	TotalCostUSD  float64 `json:"total_cost_usd"`
+	TotalTokens   int64   `json:"total_tokens"`
 }
 
 // RunbookMatcher finds runbooks relevant to a given alert and formats them for
