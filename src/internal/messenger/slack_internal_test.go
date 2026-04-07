@@ -738,3 +738,116 @@ func TestSlackStartWithoutAppToken(t *testing.T) {
 		t.Fatalf("Stop returned error: %v", err)
 	}
 }
+
+// --- markEventSeen dedupe ---
+
+func TestSlackMarkEventSeen_DedupesByChannelAndTS(t *testing.T) {
+	s := NewSlack("xoxb-test", "xapp-test", "", "#alerts", nil, testLogger())
+
+	if dup := s.markEventSeen("C1", "100.001"); dup {
+		t.Fatalf("first call should not be a duplicate")
+	}
+	if dup := s.markEventSeen("C1", "100.001"); !dup {
+		t.Fatalf("second call with same key should be a duplicate")
+	}
+	// Different channel, same ts → not duplicate
+	if dup := s.markEventSeen("C2", "100.001"); dup {
+		t.Errorf("different channel should not dedupe")
+	}
+	// Different ts, same channel → not duplicate
+	if dup := s.markEventSeen("C1", "100.002"); dup {
+		t.Errorf("different ts should not dedupe")
+	}
+}
+
+func TestSlackMarkEventSeen_IgnoresEmptyKey(t *testing.T) {
+	s := NewSlack("xoxb-test", "xapp-test", "", "#alerts", nil, testLogger())
+
+	if dup := s.markEventSeen("", "100.001"); dup {
+		t.Errorf("empty channel should never dedupe")
+	}
+	if dup := s.markEventSeen("C1", ""); dup {
+		t.Errorf("empty ts should never dedupe")
+	}
+	// Calling twice with empty key should still both return false (not stored).
+	if dup := s.markEventSeen("", ""); dup {
+		t.Errorf("both empty should never dedupe (call 1)")
+	}
+	if dup := s.markEventSeen("", ""); dup {
+		t.Errorf("both empty should never dedupe (call 2)")
+	}
+}
+
+// --- SendAlert canonical channel normalization ---
+
+func TestSlackSendAlert_NormalizesChannelFromResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth.test":
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "user_id": "U123"})
+		case "/chat.postMessage":
+			// Slack always returns the canonical channel ID, even if the
+			// request used a # name. Verify SendAlert reads it from the response.
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok":      true,
+				"ts":      "1700000000.123456",
+				"channel": "C0123ABCDEF",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := NewSlack("xoxb-test", "", "", "#human-name", nil, testLogger())
+	s.baseURL = server.URL
+
+	alert := &domain.Alert{
+		Source: "test",
+		Name:   "TestAlert",
+		Status: domain.StatusFiring,
+	}
+	ref, err := s.SendAlert(context.Background(), alert)
+	if err != nil {
+		t.Fatalf("SendAlert: %v", err)
+	}
+	if ref == nil {
+		t.Fatal("expected ref, got nil")
+	}
+	if ref.Channel != "C0123ABCDEF" {
+		t.Errorf("Channel should be normalized to canonical ID, got %q", ref.Channel)
+	}
+	if ref.MessageID != "1700000000.123456" {
+		t.Errorf("MessageID should be ts, got %q", ref.MessageID)
+	}
+}
+
+func TestSlackSendAlert_FallsBackToInputChannelWhenResponseEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth.test":
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "user_id": "U123"})
+		case "/chat.postMessage":
+			// Older Slack mocks may not include "channel" — make sure we
+			// gracefully fall back to whatever the request used.
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok": true,
+				"ts": "1700000000.123456",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := NewSlack("xoxb-test", "", "", "#human-name", nil, testLogger())
+	s.baseURL = server.URL
+
+	ref, err := s.SendAlert(context.Background(), &domain.Alert{Name: "X", Status: domain.StatusFiring})
+	if err != nil {
+		t.Fatalf("SendAlert: %v", err)
+	}
+	if ref.Channel != "#human-name" {
+		t.Errorf("expected fallback to input channel, got %q", ref.Channel)
+	}
+}

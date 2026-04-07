@@ -50,8 +50,9 @@ func TestFormatSlackAnalysis(t *testing.T) {
 	if !contains(text, "CPU usage is high") {
 		t.Error("expected analysis text")
 	}
-	if !contains(text, "_Tools used: kubectl, prometheus_") {
-		t.Error("expected tools used")
+	// Tools are now grouped by category with checkmarks instead of a flat list.
+	if !contains(text, "Tools:") || !contains(text, "kubectl") || !contains(text, "prometheus") {
+		t.Errorf("expected grouped tools trace; got %q", text)
 	}
 }
 

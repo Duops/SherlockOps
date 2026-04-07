@@ -5,6 +5,9 @@ import "time"
 // AnalysisResult holds the LLM analysis of an alert.
 type AnalysisResult struct {
 	AlertFingerprint string           `json:"alert_fingerprint"`
+	AlertName        string           `json:"alert_name"`
+	Source           string           `json:"source"`   // receiver source: "alertmanager", "grafana", ...
+	Severity         string           `json:"severity"` // copied from the original alert
 	Text             string           `json:"text"`
 	ToolsUsed        []string         `json:"tools_used"`
 	ToolsTrace       []ToolTraceEntry `json:"tools_trace"`

@@ -30,6 +30,15 @@ document.addEventListener('DOMContentLoaded', function () {
             var active = (data.total_count || 0) - (data.resolved_count || 0);
             document.getElementById('stat-active').textContent = active >= 0 ? active : 0;
             document.getElementById('stat-avg-length').textContent = Math.round(data.avg_text_length || 0);
+
+            var cost = data.total_cost_usd || 0;
+            var costStr = '-';
+            if (cost > 0) {
+                if (cost < 0.01) costStr = '$' + cost.toFixed(4);
+                else if (cost < 1) costStr = '$' + cost.toFixed(3);
+                else costStr = '$' + cost.toFixed(2);
+            }
+            document.getElementById('stat-total-cost').textContent = costStr;
         }).catch(function () {
             // stats unavailable
         });
@@ -63,10 +72,9 @@ document.addEventListener('DOMContentLoaded', function () {
     function populateSources() {
         var sources = {};
         state.alerts.forEach(function (a) {
-            // source is derived from labels or fingerprint prefix if available
             if (a.source) sources[a.source] = true;
         });
-        var current = filterSource.value;
+        var current = state.filterSource || filterSource.value;
         filterSource.innerHTML = '<option value="">All Sources</option>';
         Object.keys(sources).sort().forEach(function (s) {
             var opt = document.createElement('option');
@@ -78,8 +86,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function matchesFilters(alert) {
-        if (state.filterSource && alert.source !== state.filterSource) return false;
-        if (state.filterSeverity && alert.severity !== state.filterSeverity) return false;
+        if (state.filterSource && (alert.source || '') !== state.filterSource) return false;
+        if (state.filterSeverity) {
+            var sev = alert.severity || extractSeverity(alert);
+            if (sev !== state.filterSeverity) return false;
+        }
         if (state.filterStatus) {
             var isResolved = alert.resolved_at && alert.resolved_at !== '';
             if (state.filterStatus === 'resolved' && !isResolved) return false;
@@ -87,8 +98,13 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (state.searchName) {
             var term = state.searchName.toLowerCase();
-            var text = (alert.alert_fingerprint || '').toLowerCase() + ' ' + (alert.text || '').toLowerCase();
-            if (text.indexOf(term) === -1) return false;
+            var haystack = [
+                alert.alert_fingerprint || '',
+                alert.alert_name || '',
+                alert.source || '',
+                alert.text || ''
+            ].join(' ').toLowerCase();
+            if (haystack.indexOf(term) === -1) return false;
         }
         return true;
     }
@@ -113,11 +129,58 @@ document.addEventListener('DOMContentLoaded', function () {
         return 'info';
     }
 
+    // formatToolsOnly renders just the grouped tools trace without tokens/cost:
+    // "kubernetes ✓(5)  victoriametrics ✓(5)". Tokens and cost are shown in
+    // their own dedicated columns in the dashboard.
+    function formatToolsOnly(alert) {
+        var parts = [];
+        var trace = alert.tools_trace;
+        if (trace && trace.length > 0) {
+            trace.forEach(function (t) {
+                var mark = t.success ? '\u2713' : '\u2717';
+                if (t.call_count > 0) {
+                    parts.push(t.name + ' ' + mark + '(' + t.call_count + ')');
+                } else {
+                    parts.push(t.name + ' ' + mark);
+                }
+            });
+        } else if (alert.tools_used && alert.tools_used.length > 0) {
+            var counts = {};
+            alert.tools_used.forEach(function (t) {
+                var cat = t.indexOf('_') >= 0 ? t.split('_')[0] : t;
+                counts[cat] = (counts[cat] || 0) + 1;
+            });
+            Object.keys(counts).sort().forEach(function (cat) {
+                parts.push(cat + ' \u2713(' + counts[cat] + ')');
+            });
+        }
+        return parts.length > 0 ? parts.join('  ') : '-';
+    }
+
+    function formatTokenCount(n) {
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        return String(n);
+    }
+
+    function formatCost(usd) {
+        if (!usd || usd <= 0) return '';
+        if (usd < 0.01) return '~$' + usd.toFixed(4);
+        return '~$' + usd.toFixed(3);
+    }
+
     function renderAlerts() {
         var filtered = state.alerts.filter(matchesFilters);
 
+        // Always sort by timestamp DESC — newest first — regardless of the
+        // order the API returned (pending stubs may be interleaved).
+        filtered.sort(function (a, b) {
+            var ta = a.cached_at ? Date.parse(a.cached_at) : 0;
+            var tb = b.cached_at ? Date.parse(b.cached_at) : 0;
+            return tb - ta;
+        });
+
         if (filtered.length === 0) {
-            alertsBody.innerHTML = '<tr><td colspan="6" class="empty-state">No alerts found</td></tr>';
+            alertsBody.innerHTML = '<tr><td colspan="8" class="empty-state">No alerts found</td></tr>';
             return;
         }
 
@@ -127,19 +190,23 @@ document.addEventListener('DOMContentLoaded', function () {
             var severity = alert.severity || extractSeverity(alert);
             var status = isResolved ? 'resolved' : 'firing';
             var expanded = state.expandedFingerprint === alert.alert_fingerprint;
-            var toolsStr = (alert.tools_used || []).join(', ') || '-';
+            var toolsStr = formatToolsOnly(alert);
+            var tokensStr = alert.total_tokens > 0 ? formatTokenCount(alert.total_tokens) : '-';
+            var costStr = formatCost(alert.cost_usd) || '-';
 
             html += '<tr onclick="toggleAlert(\'' + escapeHtml(alert.alert_fingerprint) + '\')">';
             html += '<td>' + formatTime(alert.cached_at) + '</td>';
             html += '<td>' + escapeHtml(alert.source || '-') + '</td>';
-            html += '<td>' + escapeHtml(alert.alert_fingerprint) + '</td>';
+            html += '<td>' + escapeHtml(alert.alert_name || alert.alert_fingerprint) + '</td>';
             html += '<td><span class="severity-badge severity-' + severity + '">' + severity + '</span></td>';
             html += '<td><span class="status-badge status-' + status + '">' + status + '</span></td>';
             html += '<td class="fingerprint">' + escapeHtml(toolsStr) + '</td>';
+            html += '<td>' + escapeHtml(tokensStr) + '</td>';
+            html += '<td>' + escapeHtml(costStr) + '</td>';
             html += '</tr>';
 
             if (expanded) {
-                html += '<tr class="analysis-row"><td colspan="6">';
+                html += '<tr class="analysis-row"><td colspan="8">';
                 html += '<div class="analysis-content">' + escapeHtml(alert.text) + '</div>';
                 html += '</td></tr>';
             }

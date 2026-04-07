@@ -541,3 +541,62 @@ func TestPendingStore_Cleanup(t *testing.T) {
 		t.Errorf("fresh entry should still exist")
 	}
 }
+
+func TestPendingStore_ListOrderingAndLimit(t *testing.T) {
+	c, err := New(tempDB(t), time.Hour, 5)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+
+	// Insert three pending entries with manually-controlled created_at so the
+	// ordering is deterministic.
+	for i, ts := range []string{"100", "101", "102"} {
+		ref := &domain.MessageRef{Messenger: "slack", Channel: "C1", MessageID: ts}
+		alert := &domain.Alert{Name: fmt.Sprintf("alert-%d", i), Fingerprint: ts}
+		if err := c.SavePending(ctx, ref, alert); err != nil {
+			t.Fatalf("SavePending: %v", err)
+		}
+	}
+	// Backdate first entry, middle entry stays "now", last entry is in the future.
+	now := time.Now().UTC()
+	_, _ = c.db.ExecContext(ctx, "UPDATE pending_alerts SET created_at=? WHERE key=?",
+		now.Add(-2*time.Hour).Format(time.RFC3339),
+		pendingKey("slack", "C1", "100"))
+	_, _ = c.db.ExecContext(ctx, "UPDATE pending_alerts SET created_at=? WHERE key=?",
+		now.Add(2*time.Minute).Format(time.RFC3339),
+		pendingKey("slack", "C1", "102"))
+
+	got, err := c.ListPending(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(got))
+	}
+	// DESC by created_at: 102 (future), 101 (now), 100 (past).
+	if got[0].Alert.Fingerprint != "102" || got[1].Alert.Fingerprint != "101" || got[2].Alert.Fingerprint != "100" {
+		t.Errorf("wrong order: %s %s %s",
+			got[0].Alert.Fingerprint, got[1].Alert.Fingerprint, got[2].Alert.Fingerprint)
+	}
+
+	// limit=2 returns only the two most recent
+	got, err = c.ListPending(ctx, 2)
+	if err != nil {
+		t.Fatalf("ListPending limit: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("limit=2 expected 2, got %d", len(got))
+	}
+	if got[0].Alert.Fingerprint != "102" || got[1].Alert.Fingerprint != "101" {
+		t.Errorf("limit=2 wrong order")
+	}
+
+	// limit<=0 falls back to default (50) — just verify no error and all returned.
+	got, err = c.ListPending(ctx, 0)
+	if err != nil || len(got) != 3 {
+		t.Errorf("limit=0 should default and return all 3; got %d err=%v", len(got), err)
+	}
+}

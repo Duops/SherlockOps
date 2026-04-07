@@ -33,6 +33,12 @@ type SlackMessenger struct {
 	baseURL        string // overridable for testing
 	botUserID      string
 	mu             sync.Mutex
+
+	// recentEvents dedupes Slack event payloads keyed by "channel:ts" so that
+	// when both `app_mention` and `message.channels` are subscribed (Slack will
+	// fire BOTH for a single user mention) we only handle the event once.
+	recentEvents   map[string]time.Time
+	recentEventsMu sync.Mutex
 }
 
 // NewSlack creates a new SlackMessenger.
@@ -46,7 +52,44 @@ func NewSlack(botToken, appToken, signingSecret, defaultChannel string, listenCh
 		client:         &http.Client{Timeout: 30 * time.Second},
 		logger:         logger,
 		baseURL:        "https://slack.com/api",
+		recentEvents:   make(map[string]time.Time),
 	}
+}
+
+// recentEventTTL is how long an event key stays in the dedupe map before
+// it expires. Slack rarely re-delivers an event more than a few seconds after
+// the original.
+const recentEventTTL = 5 * time.Minute
+
+// markEventSeen reports whether the given (channel, ts) pair has already been
+// processed within recentEventTTL. Returns true if it is a duplicate (caller
+// should skip), false if it is fresh (caller should process and the event is
+// now recorded as seen).
+func (s *SlackMessenger) markEventSeen(channel, ts string) bool {
+	if channel == "" || ts == "" {
+		return false
+	}
+	key := channel + ":" + ts
+	now := time.Now()
+
+	s.recentEventsMu.Lock()
+	defer s.recentEventsMu.Unlock()
+
+	// Opportunistic GC of expired entries — the map stays bounded under
+	// normal load (handful of events per second × 5 min).
+	if len(s.recentEvents) > 1024 {
+		for k, t := range s.recentEvents {
+			if now.Sub(t) > recentEventTTL {
+				delete(s.recentEvents, k)
+			}
+		}
+	}
+
+	if t, ok := s.recentEvents[key]; ok && now.Sub(t) < recentEventTTL {
+		return true
+	}
+	s.recentEvents[key] = now
+	return false
 }
 
 func (s *SlackMessenger) Name() string {
@@ -239,16 +282,25 @@ func (s *SlackMessenger) SendAlert(ctx context.Context, alert *domain.Alert) (*d
 		return nil, err
 	}
 
+	// Slack always returns the canonical channel ID in the response, even when
+	// the request used a channel name or # prefix. We MUST normalize on the ID
+	// here so that the pending-store key matches the channel field that arrives
+	// in subsequent Slack events (which always use channel IDs).
 	var result struct {
-		TS string `json:"ts"`
+		TS      string `json:"ts"`
+		Channel string `json:"channel"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("decode ts from response: %w", err)
 	}
+	canonicalChannel := result.Channel
+	if canonicalChannel == "" {
+		canonicalChannel = channel
+	}
 
 	return &domain.MessageRef{
 		Messenger: "slack",
-		Channel:   channel,
+		Channel:   canonicalChannel,
 		MessageID: result.TS,
 		Alert:     alert,
 	}, nil
@@ -303,10 +355,16 @@ func formatSlackAnalysis(alert *domain.Alert, result *domain.AnalysisResult) str
 	if alert.Severity != "" {
 		sb.WriteString(fmt.Sprintf("_Severity: %s | Status: %s_\n", alert.Severity, alert.Status))
 	}
+	if badge := formatCacheBadge(result); badge != "" {
+		sb.WriteString(badge)
+	}
 	sb.WriteString("\n")
 	sb.WriteString(result.Text)
-	if len(result.ToolsUsed) > 0 {
-		sb.WriteString(fmt.Sprintf("\n\n_Tools used: %s_", strings.Join(result.ToolsUsed, ", ")))
+	// Use the shared, service-built trace formatter so tools render as
+	// grouped categories with counts and cost ("kubernetes ✓(5) | 33.1k ~$0.118"),
+	// instead of the raw flat list ("prometheus_labels, k8s_get_pods, ...").
+	if trace := formatToolsTraceFromResult(result); trace != "" {
+		sb.WriteString(fmt.Sprintf("\n\n\U0001F6E0\uFE0F _Tools: %s_", trace))
 	}
 	return sb.String()
 }
@@ -576,10 +634,94 @@ func (s *SlackMessenger) listenWebSocket(ctx context.Context, wssURL string) {
 			}
 		}
 
-		if msg.Type == "events_api" {
+		switch msg.Type {
+		case "events_api":
 			s.handleEventPayload(ctx, msg.Payload)
+		case "slash_commands":
+			s.handleSlashCommandPayload(ctx, msg.Payload)
 		}
 	}
+}
+
+// slackSlashCommand is the inner payload of a `slash_commands` envelope
+// delivered via Socket Mode. Slack sends URL-form-encoded fields as JSON
+// keys here.
+type slackSlashCommand struct {
+	Command   string `json:"command"`
+	Text      string `json:"text"`
+	UserID    string `json:"user_id"`
+	ChannelID string `json:"channel_id"`
+	// thread_ts is present when the user invoked the command from inside
+	// a thread reply box. Top-level invocations leave it empty.
+	ThreadTS string `json:"thread_ts"`
+}
+
+// handleSlashCommandPayload processes a /analyze (or similar) slash command.
+// Behavior:
+//   - If invoked inside a thread (thread_ts present), build a synthetic mention
+//     alert with ReplyTarget pointing at that thread, so ResolvePendingMention
+//     can swap it for the original alert and run real analysis.
+//   - If invoked at the top level (no thread context), drop into the synthetic
+//     mention path with empty ThreadID — the pipeline guard will respond with
+//     a hint asking the user to invoke /analyze inside an alert thread.
+func (s *SlackMessenger) handleSlashCommandPayload(_ context.Context, raw json.RawMessage) {
+	var cmd slackSlashCommand
+	if err := json.Unmarshal(raw, &cmd); err != nil {
+		s.logger.Warn("failed to unmarshal slash command payload", slog.String("error", err.Error()))
+		return
+	}
+
+	// Only react to /analyze (or any command alias listed in handledSlashCommands).
+	if !isHandledSlashCommand(cmd.Command) {
+		s.logger.Debug("slack slash command ignored: not /analyze", slog.String("command", cmd.Command))
+		return
+	}
+
+	if !s.isListenChannel(cmd.ChannelID) {
+		s.logger.Info("slack slash command ignored: channel not in listen_channels",
+			slog.String("channel", cmd.ChannelID),
+			slog.String("command", cmd.Command),
+		)
+		return
+	}
+
+	if s.handler == nil {
+		s.logger.Warn("slack slash command dropped: no handler registered")
+		return
+	}
+
+	s.logger.Info("slack: handling slash command",
+		slog.String("command", cmd.Command),
+		slog.String("channel", cmd.ChannelID),
+		slog.String("thread_ts", cmd.ThreadTS),
+		slog.Bool("in_thread", cmd.ThreadTS != ""),
+	)
+
+	alert := &domain.Alert{
+		Source:     "slack",
+		Name:       "thread-mention",
+		ReceivedAt: time.Now(),
+		ReplyTarget: &domain.ReplyTarget{
+			Messenger: "slack",
+			Channel:   cmd.ChannelID,
+			ThreadID:  cmd.ThreadTS,
+		},
+		// Force the analyze keyword so ResolvePendingMention treats this as
+		// an explicit analyze request even though there is no @mention text.
+		UserCommand: "analyze " + cmd.Text,
+	}
+	s.handler(alert)
+}
+
+// handledSlashCommands lists the slash commands this messenger reacts to.
+// Slack sends commands with the leading slash.
+var handledSlashCommands = map[string]struct{}{
+	"/analyze": {},
+}
+
+func isHandledSlashCommand(cmd string) bool {
+	_, ok := handledSlashCommands[strings.ToLower(strings.TrimSpace(cmd))]
+	return ok
 }
 
 // handleEventPayload processes an event_callback payload.
@@ -608,6 +750,22 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 		slog.String("bot_id", evt.BotID),
 		slog.String("text", textPreview),
 	)
+
+	// Dedupe by (channel, ts): when both `app_mention` and `message.channels`
+	// are subscribed, Slack delivers BOTH for the same user message. Process
+	// only the first one we see. Edits/deletes (subtype message_changed/deleted)
+	// have a different ts (the EVENT ts, not the message ts) so they are not
+	// affected by this filter.
+	if (evt.Type == "message" || evt.Type == "app_mention") && evt.SubType != "message_changed" && evt.SubType != "message_deleted" {
+		if s.markEventSeen(evt.Channel, evt.TS) {
+			s.logger.Debug("slack event ignored: duplicate (channel,ts) seen recently",
+				slog.String("type", evt.Type),
+				slog.String("channel", evt.Channel),
+				slog.String("ts", evt.TS),
+			)
+			return
+		}
+	}
 
 	// We care about two event families:
 	//   - "message"     : regular channel/thread messages (requires message.* subscriptions + channels:history)

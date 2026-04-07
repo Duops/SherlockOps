@@ -211,6 +211,8 @@ func formatTelegramAnalysis(alert *domain.Alert, result *domain.AnalysisResult, 
 
 	converted := convertSlackToTelegram(result.Text, parseMode)
 
+	trace := formatToolsTraceFromResult(result)
+
 	if parseMode == "HTML" {
 		sb.WriteString(fmt.Sprintf("<b>Alert Analysis: %s</b>\n", alert.Name))
 		if alert.Severity != "" {
@@ -218,8 +220,8 @@ func formatTelegramAnalysis(alert *domain.Alert, result *domain.AnalysisResult, 
 		}
 		sb.WriteString("\n")
 		sb.WriteString(converted)
-		if len(result.ToolsUsed) > 0 {
-			sb.WriteString(fmt.Sprintf("\n\n<i>Tools used: %s</i>", strings.Join(result.ToolsUsed, ", ")))
+		if trace != "" {
+			sb.WriteString(fmt.Sprintf("\n\n🛠️ <i>Tools: %s</i>", trace))
 		}
 	} else {
 		sb.WriteString(fmt.Sprintf("*Alert Analysis: %s*\n", alert.Name))
@@ -228,8 +230,8 @@ func formatTelegramAnalysis(alert *domain.Alert, result *domain.AnalysisResult, 
 		}
 		sb.WriteString("\n")
 		sb.WriteString(converted)
-		if len(result.ToolsUsed) > 0 {
-			sb.WriteString(fmt.Sprintf("\n\n_Tools used: %s_", strings.Join(result.ToolsUsed, ", ")))
+		if trace != "" {
+			sb.WriteString(fmt.Sprintf("\n\n🛠️ _Tools: %s_", trace))
 		}
 	}
 

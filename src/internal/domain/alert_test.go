@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"testing"
 )
 
@@ -328,4 +329,15 @@ func TestBuildRawText(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestRequestIDContextRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	if got := RequestIDFromContext(ctx); got != "" {
+		t.Errorf("empty context should yield empty request id, got %q", got)
+	}
+	ctx = ContextWithRequestID(ctx, "req-42")
+	if got := RequestIDFromContext(ctx); got != "req-42" {
+		t.Errorf("expected req-42, got %q", got)
+	}
 }
