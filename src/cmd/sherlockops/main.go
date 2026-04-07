@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,7 +33,7 @@ func main() {
 	configPath := flag.String("config", "/etc/sherlockops/config.yaml", "path to config file")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(os.Getenv("LOG_LEVEL"))}))
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -439,6 +440,21 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 	}
 
 	return registry
+}
+
+// parseLogLevel converts a LOG_LEVEL env value ("debug"/"info"/"warn"/"error",
+// case-insensitive) into a slog.Level. Empty or unknown values default to Info.
+func parseLogLevel(v string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 // pendingListerAdapter adapts cache.SQLiteCache.ListPending to the
