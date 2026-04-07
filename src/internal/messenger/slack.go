@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"strings"
@@ -526,11 +527,28 @@ func (s *SlackMessenger) listenWebSocket(ctx context.Context, wssURL string) {
 	}
 	defer conn.Close()
 
-	// Set initial read deadline and refresh on each pong.
+	// Set initial read deadline and refresh on every ping/pong from Slack.
+	// Slack Socket Mode pings the client roughly every ~30s; gorilla/websocket
+	// surfaces those via PingHandler (and replies pong by default). We must
+	// extend the read deadline in BOTH handlers, otherwise a quiet period
+	// (no app events for >60s) trips an i/o timeout even though the link is
+	// healthy.
 	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		return nil
+	})
+	conn.SetPingHandler(func(appData string) error {
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		// Reply with a pong so Slack keeps the connection open.
+		err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(10*time.Second))
+		if err == websocket.ErrCloseSent {
+			return nil
+		}
+		if e, ok := err.(net.Error); ok && e.Timeout() {
+			return nil
+		}
+		return err
 	})
 
 	for {
