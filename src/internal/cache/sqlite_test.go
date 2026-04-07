@@ -496,3 +496,48 @@ func TestPendingStore_RoundTrip(t *testing.T) {
 		t.Errorf("expected nil for missing key, got %+v", got)
 	}
 }
+
+func TestPendingStore_Cleanup(t *testing.T) {
+	c, err := New(tempDB(t), time.Hour, 5)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+	old := &domain.MessageRef{Messenger: "slack", Channel: "C1", MessageID: "old"}
+	fresh := &domain.MessageRef{Messenger: "slack", Channel: "C1", MessageID: "fresh"}
+	a := &domain.Alert{Name: "x", Fingerprint: "fp"}
+
+	if err := c.SavePending(ctx, old, a); err != nil {
+		t.Fatalf("SavePending old: %v", err)
+	}
+	// Backdate the "old" entry directly via SQL.
+	if _, err := c.db.ExecContext(ctx,
+		"UPDATE pending_alerts SET created_at = ? WHERE key = ?",
+		time.Now().Add(-72*time.Hour).UTC().Format(time.RFC3339),
+		pendingKey(old.Messenger, old.Channel, old.MessageID),
+	); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	if err := c.SavePending(ctx, fresh, a); err != nil {
+		t.Fatalf("SavePending fresh: %v", err)
+	}
+
+	n, err := c.CleanupPending(ctx, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("CleanupPending: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row deleted, got %d", n)
+	}
+
+	got, _ := c.GetPending(ctx, old.Messenger, old.Channel, old.MessageID)
+	if got != nil {
+		t.Errorf("old entry should be gone")
+	}
+	got, _ = c.GetPending(ctx, fresh.Messenger, fresh.Channel, fresh.MessageID)
+	if got == nil {
+		t.Errorf("fresh entry should still exist")
+	}
+}

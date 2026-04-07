@@ -70,6 +70,10 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 		db.Close()
 		return nil, fmt.Errorf("cache: create pending table: %w", err)
 	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_pending_created_at ON pending_alerts(created_at)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cache: create pending index: %w", err)
+	}
 
 	return &SQLiteCache{
 		db:        db,
@@ -303,6 +307,20 @@ func (c *SQLiteCache) GetPending(ctx context.Context, messenger, channel, messag
 		return nil, fmt.Errorf("cache: GetPending unmarshal: %w", err)
 	}
 	return &alert, nil
+}
+
+// CleanupPending removes pending alert entries older than the cutoff and
+// returns the number of rows deleted. Run periodically to keep the table bounded.
+func (c *SQLiteCache) CleanupPending(ctx context.Context, olderThan time.Time) (int64, error) {
+	res, err := c.db.ExecContext(ctx,
+		"DELETE FROM pending_alerts WHERE created_at < ?",
+		olderThan.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("cache: CleanupPending: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // DeletePending removes the entry for this messenger/channel/message_id.

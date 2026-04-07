@@ -78,6 +78,10 @@ pipeline:
   #            mentions the bot with an "analyze" command, e.g.
   #            "@bot analyze" / "@бот проанализируй". Pending alerts are
   #            persisted in sqlite and survive restarts.
+  #            NOTE: reply MUST target the original alert message itself.
+  #            Replying to a previous bot answer in the same thread will
+  #            not resolve the original alert (Telegram/Teams limitation).
+  #            Stale pending entries are cleaned up automatically after 30 days.
   mode: auto
   workers: 5            # Number of async analysis workers
   queue_size: 1000      # Max alerts in queue before dropping
