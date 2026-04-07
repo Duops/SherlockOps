@@ -131,6 +131,77 @@ TEAMS_CLIENT_SECRET=xxxxx                # Bot Framework mode: Azure AD secret
 - Only `SLACK_BOT_TOKEN` → webhook mode (posts alerts, replies in threads)
 - `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` → webhook + listener mode (also watches channels for alerts)
 
+### Slack Bot Setup (Socket Mode)
+
+Required when you want the bot to receive `@bot analyze` mentions (manual
+pipeline mode) or run as a listener alongside alert webhooks. Socket Mode
+does **not** require exposing SherlockOps to the public internet — the bot
+opens an outbound WebSocket to Slack.
+
+One Slack App is enough. You only need two tokens from it: `xoxb-` (bot
+identity) and `xapp-` (socket transport).
+
+1. **Create the app.** Go to https://api.slack.com/apps → **Create New App** →
+   **From scratch**. Pick a name and a workspace.
+2. **Enable Socket Mode.** Sidebar → **Socket Mode** → toggle ON. Slack will
+   prompt you to create an **App-Level Token** with the `connections:write`
+   scope. Save it — this is `SLACK_APP_TOKEN` (starts with `xapp-`).
+3. **Bot Token Scopes.** Sidebar → **OAuth & Permissions** → **Scopes** →
+   **Bot Token Scopes**, add:
+   - `chat:write` — post alerts and analyses
+   - `chat:write.public` — post to public channels without being invited (optional)
+   - `app_mentions:read` — receive `@bot analyze`
+   - `channels:history` — read public-channel threads to resolve replies
+   - `groups:history` — same for private channels
+   - `users:read` — resolve user mentions
+4. **Subscribe to events.** Sidebar → **Event Subscriptions** → toggle ON.
+   (Socket Mode does not need a Request URL.) Under **Subscribe to bot
+   events** add:
+   - `app_mention` — required
+   - `message.channels` / `message.groups` — optional, only if you want
+     listener mode to react to plain messages
+5. **Install the app to your workspace.** Sidebar → **Install App** → **Install
+   to Workspace**. After install, copy the **Bot User OAuth Token** — this is
+   `SLACK_BOT_TOKEN` (starts with `xoxb-`).
+6. **Invite the bot to each alert channel** so it can post and read history:
+   ```
+   /invite @SherlockOps
+   ```
+   Grab the Channel ID from channel details (looks like `C0123ABCDEF`).
+7. **Configure SherlockOps** (`config.yaml`):
+   ```yaml
+   messengers:
+     slack:
+       enabled: true
+       bot_token: ""                 # read from env SLACK_BOT_TOKEN
+       app_token: ""                 # read from env SLACK_APP_TOKEN
+       default_channel: "C0123ABCDEF"
+       listen_channels:              # channels the bot listens for @mentions
+         - "C0123ABCDEF"
+   ```
+   And `.env`:
+   ```bash
+   SLACK_BOT_TOKEN=xoxb-...
+   SLACK_APP_TOKEN=xapp-...
+   ```
+8. **Verify.** Start SherlockOps — the logs should contain
+   `messenger started name=slack`. Send a test alert via a webhook and
+   confirm it lands in `default_channel`. For manual mode, reply to the
+   alert message in-thread with `@SherlockOps analyze` — the bot should
+   reply with the LLM analysis in the same thread.
+
+**Troubleshooting:**
+- `not_in_channel` when posting → invite the bot or add `chat:write.public`.
+- Bot does not react to mentions → make sure `app_mention` is in the event
+  subscriptions **and** the bot is a member of the channel.
+- Socket Mode fails to connect → the `xapp-` token needs `connections:write`.
+  Don't confuse `xapp-` (socket transport) with `xoxb-` (bot identity) and
+  `xoxp-` (user token) — they are not interchangeable.
+- Mentions only resolve when replying to the **original alert message**, not
+  to a previous bot answer in the same thread (Slack exposes
+  `thread_ts = root`, so replies to any message in the thread still work for
+  Slack; Telegram and Teams are stricter).
+
 ### Webhook Headers (set in Alertmanager config)
 | Header | Purpose | Example |
 |--------|---------|---------|
