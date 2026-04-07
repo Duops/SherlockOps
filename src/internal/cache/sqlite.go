@@ -54,11 +54,25 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 		analysis_text TEXT,
 		tools_used   TEXT,
 		created_at   TEXT,
-		resolved_at  TEXT
+		resolved_at  TEXT,
+		source       TEXT DEFAULT '',
+		severity     TEXT DEFAULT '',
+		alert_name   TEXT DEFAULT ''
 	)`
 	if _, err := db.Exec(createSQL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cache: create table: %w", err)
+	}
+	// Online migration for pre-existing installations: add columns if the
+	// table was created before source/severity/alert_name were introduced.
+	// SQLite's ADD COLUMN is idempotent-friendly via "column already exists"
+	// error which we silently tolerate.
+	for _, col := range []string{
+		"ALTER TABLE alerts_cache ADD COLUMN source TEXT DEFAULT ''",
+		"ALTER TABLE alerts_cache ADD COLUMN severity TEXT DEFAULT ''",
+		"ALTER TABLE alerts_cache ADD COLUMN alert_name TEXT DEFAULT ''",
+	} {
+		_, _ = db.Exec(col) // ignore "duplicate column name" errors
 	}
 
 	pendingSQL := `CREATE TABLE IF NOT EXISTS pending_alerts (
@@ -85,17 +99,20 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 // Get returns a cached analysis result or nil if not found or expired.
 func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.AnalysisResult, error) {
 	row := c.db.QueryRowContext(ctx,
-		"SELECT analysis_text, tools_used, created_at, resolved_at FROM alerts_cache WHERE fingerprint = ?",
+		"SELECT analysis_text, tools_used, created_at, resolved_at, source, severity, alert_name FROM alerts_cache WHERE fingerprint = ?",
 		fingerprint,
 	)
 
 	var (
-		text       string
-		toolsRaw   string
-		createdRaw string
+		text        string
+		toolsRaw    string
+		createdRaw  string
 		resolvedRaw sql.NullString
+		source      sql.NullString
+		severity    sql.NullString
+		alertName   sql.NullString
 	)
-	if err := row.Scan(&text, &toolsRaw, &createdRaw, &resolvedRaw); err != nil {
+	if err := row.Scan(&text, &toolsRaw, &createdRaw, &resolvedRaw, &source, &severity, &alertName); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -115,6 +132,9 @@ func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.Anal
 		AlertFingerprint: fingerprint,
 		Text:             text,
 		CachedAt:         createdAt,
+		Source:           source.String,
+		Severity:         severity.String,
+		AlertName:        alertName.String,
 	}
 
 	if toolsRaw != "" {
@@ -141,13 +161,17 @@ func (c *SQLiteCache) Set(ctx context.Context, result *domain.AnalysisResult) er
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO alerts_cache (fingerprint, analysis_text, tools_used, created_at, resolved_at)
-		 VALUES (?, ?, ?, ?, NULL)
+		`INSERT INTO alerts_cache (fingerprint, analysis_text, tools_used, created_at, resolved_at, source, severity, alert_name)
+		 VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
 		 ON CONFLICT(fingerprint) DO UPDATE SET
 		   analysis_text = excluded.analysis_text,
 		   tools_used    = excluded.tools_used,
-		   created_at    = excluded.created_at`,
+		   created_at    = excluded.created_at,
+		   source        = excluded.source,
+		   severity      = excluded.severity,
+		   alert_name    = excluded.alert_name`,
 		result.AlertFingerprint, result.Text, toolsStr, now,
+		result.Source, result.Severity, result.AlertName,
 	)
 	if err != nil {
 		return fmt.Errorf("cache: set: %w", err)
@@ -184,7 +208,7 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 	}
 
 	rows, err := c.db.QueryContext(ctx,
-		"SELECT fingerprint, analysis_text, tools_used, created_at, resolved_at FROM alerts_cache ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT fingerprint, analysis_text, tools_used, created_at, resolved_at, source, severity, alert_name FROM alerts_cache ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		limit, offset,
 	)
 	if err != nil {
@@ -200,14 +224,20 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 			toolsRaw    string
 			createdRaw  string
 			resolvedRaw sql.NullString
+			source      sql.NullString
+			severity    sql.NullString
+			alertName   sql.NullString
 		)
-		if err := rows.Scan(&fingerprint, &text, &toolsRaw, &createdRaw, &resolvedRaw); err != nil {
+		if err := rows.Scan(&fingerprint, &text, &toolsRaw, &createdRaw, &resolvedRaw, &source, &severity, &alertName); err != nil {
 			return nil, 0, fmt.Errorf("cache: list scan: %w", err)
 		}
 
 		result := &domain.AnalysisResult{
 			AlertFingerprint: fingerprint,
 			Text:             text,
+			Source:           source.String,
+			Severity:         severity.String,
+			AlertName:        alertName.String,
 		}
 
 		if createdAt, err := time.Parse(time.RFC3339, createdRaw); err == nil {

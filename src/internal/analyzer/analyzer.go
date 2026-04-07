@@ -429,6 +429,9 @@ func buildResult(alert *domain.Alert, text string, tools []toolRecord, resolver 
 
 	return &domain.AnalysisResult{
 		AlertFingerprint: alert.Fingerprint,
+		AlertName:        alert.Name,
+		Source:           alert.Source,
+		Severity:         string(alert.Severity),
 		Text:             text,
 		ToolsUsed:        names,
 		ToolsTrace:       trace,

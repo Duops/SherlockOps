@@ -355,10 +355,16 @@ func formatSlackAnalysis(alert *domain.Alert, result *domain.AnalysisResult) str
 	if alert.Severity != "" {
 		sb.WriteString(fmt.Sprintf("_Severity: %s | Status: %s_\n", alert.Severity, alert.Status))
 	}
+	if badge := formatCacheBadge(result); badge != "" {
+		sb.WriteString(badge)
+	}
 	sb.WriteString("\n")
 	sb.WriteString(result.Text)
-	if len(result.ToolsUsed) > 0 {
-		sb.WriteString(fmt.Sprintf("\n\n_Tools used: %s_", strings.Join(result.ToolsUsed, ", ")))
+	// Use the shared, service-built trace formatter so tools render as
+	// grouped categories with counts and cost ("kubernetes ✓(5) | 33.1k ~$0.118"),
+	// instead of the raw flat list ("prometheus_labels, k8s_get_pods, ...").
+	if trace := formatToolsTraceFromResult(result); trace != "" {
+		sb.WriteString(fmt.Sprintf("\n\n\U0001F6E0\uFE0F _Tools: %s_", trace))
 	}
 	return sb.String()
 }
@@ -628,10 +634,94 @@ func (s *SlackMessenger) listenWebSocket(ctx context.Context, wssURL string) {
 			}
 		}
 
-		if msg.Type == "events_api" {
+		switch msg.Type {
+		case "events_api":
 			s.handleEventPayload(ctx, msg.Payload)
+		case "slash_commands":
+			s.handleSlashCommandPayload(ctx, msg.Payload)
 		}
 	}
+}
+
+// slackSlashCommand is the inner payload of a `slash_commands` envelope
+// delivered via Socket Mode. Slack sends URL-form-encoded fields as JSON
+// keys here.
+type slackSlashCommand struct {
+	Command   string `json:"command"`
+	Text      string `json:"text"`
+	UserID    string `json:"user_id"`
+	ChannelID string `json:"channel_id"`
+	// thread_ts is present when the user invoked the command from inside
+	// a thread reply box. Top-level invocations leave it empty.
+	ThreadTS string `json:"thread_ts"`
+}
+
+// handleSlashCommandPayload processes a /analyze (or similar) slash command.
+// Behavior:
+//   - If invoked inside a thread (thread_ts present), build a synthetic mention
+//     alert with ReplyTarget pointing at that thread, so ResolvePendingMention
+//     can swap it for the original alert and run real analysis.
+//   - If invoked at the top level (no thread context), drop into the synthetic
+//     mention path with empty ThreadID — the pipeline guard will respond with
+//     a hint asking the user to invoke /analyze inside an alert thread.
+func (s *SlackMessenger) handleSlashCommandPayload(_ context.Context, raw json.RawMessage) {
+	var cmd slackSlashCommand
+	if err := json.Unmarshal(raw, &cmd); err != nil {
+		s.logger.Warn("failed to unmarshal slash command payload", slog.String("error", err.Error()))
+		return
+	}
+
+	// Only react to /analyze (or any command alias listed in handledSlashCommands).
+	if !isHandledSlashCommand(cmd.Command) {
+		s.logger.Debug("slack slash command ignored: not /analyze", slog.String("command", cmd.Command))
+		return
+	}
+
+	if !s.isListenChannel(cmd.ChannelID) {
+		s.logger.Info("slack slash command ignored: channel not in listen_channels",
+			slog.String("channel", cmd.ChannelID),
+			slog.String("command", cmd.Command),
+		)
+		return
+	}
+
+	if s.handler == nil {
+		s.logger.Warn("slack slash command dropped: no handler registered")
+		return
+	}
+
+	s.logger.Info("slack: handling slash command",
+		slog.String("command", cmd.Command),
+		slog.String("channel", cmd.ChannelID),
+		slog.String("thread_ts", cmd.ThreadTS),
+		slog.Bool("in_thread", cmd.ThreadTS != ""),
+	)
+
+	alert := &domain.Alert{
+		Source:     "slack",
+		Name:       "thread-mention",
+		ReceivedAt: time.Now(),
+		ReplyTarget: &domain.ReplyTarget{
+			Messenger: "slack",
+			Channel:   cmd.ChannelID,
+			ThreadID:  cmd.ThreadTS,
+		},
+		// Force the analyze keyword so ResolvePendingMention treats this as
+		// an explicit analyze request even though there is no @mention text.
+		UserCommand: "analyze " + cmd.Text,
+	}
+	s.handler(alert)
+}
+
+// handledSlashCommands lists the slash commands this messenger reacts to.
+// Slack sends commands with the leading slash.
+var handledSlashCommands = map[string]struct{}{
+	"/analyze": {},
+}
+
+func isHandledSlashCommand(cmd string) bool {
+	_, ok := handledSlashCommands[strings.ToLower(strings.TrimSpace(cmd))]
+	return ok
 }
 
 // handleEventPayload processes an event_callback payload.
