@@ -510,10 +510,10 @@ func buildAnalysisCard(alert *domain.Alert, result *domain.AnalysisResult) adapt
 		Wrap: true,
 	})
 
-	if len(result.ToolsUsed) > 0 {
+	if trace := formatToolsTraceFromResult(result); trace != "" {
 		bodyItems = append(bodyItems, cardElement{
 			Type:     "TextBlock",
-			Text:     fmt.Sprintf("Tools used: %s", strings.Join(result.ToolsUsed, ", ")),
+			Text:     "🛠️ Tools: " + trace,
 			IsSubtle: true,
 			Size:     "Small",
 		})

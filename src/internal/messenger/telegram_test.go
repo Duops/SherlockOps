@@ -41,8 +41,9 @@ func TestFormatTelegramAnalysis_HTML(t *testing.T) {
 	if !contains(text, "Memory usage exceeded threshold.") {
 		t.Error("expected analysis text")
 	}
-	if !contains(text, "<i>Tools used: grafana</i>") {
-		t.Error("expected tools used in HTML")
+	// Tools are grouped by category with checkmarks now.
+	if !contains(text, "Tools:") || !contains(text, "grafana") {
+		t.Errorf("expected grouped tools trace in HTML; got %q", text)
 	}
 }
 

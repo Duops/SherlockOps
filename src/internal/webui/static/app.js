@@ -63,10 +63,9 @@ document.addEventListener('DOMContentLoaded', function () {
     function populateSources() {
         var sources = {};
         state.alerts.forEach(function (a) {
-            // source is derived from labels or fingerprint prefix if available
             if (a.source) sources[a.source] = true;
         });
-        var current = filterSource.value;
+        var current = state.filterSource || filterSource.value;
         filterSource.innerHTML = '<option value="">All Sources</option>';
         Object.keys(sources).sort().forEach(function (s) {
             var opt = document.createElement('option');
@@ -78,8 +77,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function matchesFilters(alert) {
-        if (state.filterSource && alert.source !== state.filterSource) return false;
-        if (state.filterSeverity && alert.severity !== state.filterSeverity) return false;
+        if (state.filterSource && (alert.source || '') !== state.filterSource) return false;
+        if (state.filterSeverity) {
+            var sev = alert.severity || extractSeverity(alert);
+            if (sev !== state.filterSeverity) return false;
+        }
         if (state.filterStatus) {
             var isResolved = alert.resolved_at && alert.resolved_at !== '';
             if (state.filterStatus === 'resolved' && !isResolved) return false;
@@ -87,8 +89,13 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (state.searchName) {
             var term = state.searchName.toLowerCase();
-            var text = (alert.alert_fingerprint || '').toLowerCase() + ' ' + (alert.text || '').toLowerCase();
-            if (text.indexOf(term) === -1) return false;
+            var haystack = [
+                alert.alert_fingerprint || '',
+                alert.alert_name || '',
+                alert.source || '',
+                alert.text || ''
+            ].join(' ').toLowerCase();
+            if (haystack.indexOf(term) === -1) return false;
         }
         return true;
     }
@@ -113,11 +120,59 @@ document.addEventListener('DOMContentLoaded', function () {
         return 'info';
     }
 
+    // formatToolsTrace mirrors formatToolsTraceFromResult() in Go:
+    // renders a compact "kubernetes ✓(5)  victoriametrics ✓(5)" trace, and
+    // appends " | 33.1k tokens ~$0.118" when token/cost data is available.
+    function formatToolsTrace(alert) {
+        var parts = [];
+        var trace = alert.tools_trace;
+        if (trace && trace.length > 0) {
+            trace.forEach(function (t) {
+                var mark = t.success ? '\u2713' : '\u2717';
+                if (t.call_count > 0) {
+                    parts.push(t.name + ' ' + mark + '(' + t.call_count + ')');
+                } else {
+                    parts.push(t.name + ' ' + mark);
+                }
+            });
+        } else if (alert.tools_used && alert.tools_used.length > 0) {
+            // Fallback: group by "<category>_<rest>" prefix, like cached results.
+            var counts = {};
+            alert.tools_used.forEach(function (t) {
+                var cat = t.indexOf('_') >= 0 ? t.split('_')[0] : t;
+                counts[cat] = (counts[cat] || 0) + 1;
+            });
+            Object.keys(counts).sort().forEach(function (cat) {
+                parts.push(cat + ' \u2713(' + counts[cat] + ')');
+            });
+        }
+        if (parts.length === 0) return '-';
+        var out = parts.join('  ');
+        if (alert.total_tokens && alert.total_tokens > 0) {
+            out += ' | ' + formatTokenCount(alert.total_tokens) + ' tokens';
+            if (alert.cost_usd && alert.cost_usd > 0) {
+                out += ' ' + formatCost(alert.cost_usd);
+            }
+        }
+        return out;
+    }
+
+    function formatTokenCount(n) {
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        return String(n);
+    }
+
+    function formatCost(usd) {
+        if (!usd || usd <= 0) return '';
+        if (usd < 0.01) return '~$' + usd.toFixed(4);
+        return '~$' + usd.toFixed(3);
+    }
+
     function renderAlerts() {
         var filtered = state.alerts.filter(matchesFilters);
 
         if (filtered.length === 0) {
-            alertsBody.innerHTML = '<tr><td colspan="6" class="empty-state">No alerts found</td></tr>';
+            alertsBody.innerHTML = '<tr><td colspan="7" class="empty-state">No alerts found</td></tr>';
             return;
         }
 
@@ -127,19 +182,21 @@ document.addEventListener('DOMContentLoaded', function () {
             var severity = alert.severity || extractSeverity(alert);
             var status = isResolved ? 'resolved' : 'firing';
             var expanded = state.expandedFingerprint === alert.alert_fingerprint;
-            var toolsStr = (alert.tools_used || []).join(', ') || '-';
+            var toolsStr = formatToolsTrace(alert);
+            var costStr = formatCost(alert.cost_usd) || '-';
 
             html += '<tr onclick="toggleAlert(\'' + escapeHtml(alert.alert_fingerprint) + '\')">';
             html += '<td>' + formatTime(alert.cached_at) + '</td>';
             html += '<td>' + escapeHtml(alert.source || '-') + '</td>';
-            html += '<td>' + escapeHtml(alert.alert_fingerprint) + '</td>';
+            html += '<td>' + escapeHtml(alert.alert_name || alert.alert_fingerprint) + '</td>';
             html += '<td><span class="severity-badge severity-' + severity + '">' + severity + '</span></td>';
             html += '<td><span class="status-badge status-' + status + '">' + status + '</span></td>';
             html += '<td class="fingerprint">' + escapeHtml(toolsStr) + '</td>';
+            html += '<td>' + escapeHtml(costStr) + '</td>';
             html += '</tr>';
 
             if (expanded) {
-                html += '<tr class="analysis-row"><td colspan="6">';
+                html += '<tr class="analysis-row"><td colspan="7">';
                 html += '<div class="analysis-content">' + escapeHtml(alert.text) + '</div>';
                 html += '</td></tr>';
             }

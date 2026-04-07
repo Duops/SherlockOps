@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Duops/SherlockOps/internal/domain"
+	"github.com/Duops/SherlockOps/internal/pricing"
 )
 
 // PendingLister surfaces manual-mode alerts that have been received but not
@@ -120,12 +121,38 @@ func (h *Handler) apiAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"alerts":  merged,
+		"alerts":  toAPIAlerts(merged),
 		"total":   total + pendingCount,
 		"pending": pendingCount,
 		"limit":   limit,
 		"offset":  offset,
 	})
+}
+
+// apiAlert is the wire shape returned by /ui/api/alerts. It embeds the cached
+// AnalysisResult and adds derived fields the dashboard needs (estimated USD
+// cost, total tokens) so the JS does not have to know the pricing table.
+type apiAlert struct {
+	*domain.AnalysisResult
+	CostUSD float64 `json:"cost_usd"`
+}
+
+func toAPIAlert(r *domain.AnalysisResult) apiAlert {
+	if r == nil {
+		return apiAlert{}
+	}
+	return apiAlert{
+		AnalysisResult: r,
+		CostUSD:        pricing.EstimateCost(r.Model, r.InputTokens, r.OutputTokens, r.InputTokenCost, r.OutputTokenCost),
+	}
+}
+
+func toAPIAlerts(rs []*domain.AnalysisResult) []apiAlert {
+	out := make([]apiAlert, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, toAPIAlert(r))
+	}
+	return out
 }
 
 // pendingToStub converts a pending entry into an AnalysisResult-shaped object
@@ -139,6 +166,9 @@ func pendingToStub(it PendingItem) *domain.AnalysisResult {
 	}
 	return &domain.AnalysisResult{
 		AlertFingerprint: a.Fingerprint,
+		AlertName:        a.Name,
+		Source:           a.Source,
+		Severity:         string(a.Severity),
 		Text:             text,
 		ToolsUsed:        nil,
 		CachedAt:         it.CreatedAt,
@@ -164,7 +194,7 @@ func (h *Handler) apiAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, toAPIAlert(result))
 }
 
 func (h *Handler) apiStats(w http.ResponseWriter, r *http.Request) {
