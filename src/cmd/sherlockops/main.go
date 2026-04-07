@@ -254,9 +254,38 @@ func main() {
 		// with an analyze command, recover the original alert from the pending
 		// store and run normal analysis on it. Falls through unchanged if the
 		// alert is not a mention or no pending entry matches.
-		lookupCtx, cancelLookup := context.WithTimeout(ctx, 3*time.Second)
-		alert = pipeline.ResolvePendingMention(lookupCtx, sqliteCache, alert)
-		cancelLookup()
+		if alert.ReplyTarget != nil && alert.ReplyTarget.ThreadID != "" && pipeline.IsAnalyzeCommand(alert.UserCommand) {
+			lookupCtx, cancelLookup := context.WithTimeout(ctx, 3*time.Second)
+			pending, perr := sqliteCache.GetPending(lookupCtx, alert.ReplyTarget.Messenger, alert.ReplyTarget.Channel, alert.ReplyTarget.ThreadID)
+			cancelLookup()
+			if perr != nil {
+				logger.Warn("pending lookup failed",
+					"messenger", alert.ReplyTarget.Messenger,
+					"channel", alert.ReplyTarget.Channel,
+					"thread_id", alert.ReplyTarget.ThreadID,
+					"error", perr,
+				)
+			} else if pending == nil {
+				logger.Info("pending lookup miss — no stored alert for this thread; analyzing mention as-is",
+					"messenger", alert.ReplyTarget.Messenger,
+					"channel", alert.ReplyTarget.Channel,
+					"thread_id", alert.ReplyTarget.ThreadID,
+					"user_command", alert.UserCommand,
+				)
+			} else {
+				logger.Info("pending lookup hit — swapping mention with original alert",
+					"messenger", alert.ReplyTarget.Messenger,
+					"channel", alert.ReplyTarget.Channel,
+					"thread_id", alert.ReplyTarget.ThreadID,
+					"original_fingerprint", pending.Fingerprint,
+					"original_name", pending.Name,
+				)
+				pending.ReplyTarget = alert.ReplyTarget
+				pending.RequestID = alert.RequestID
+				pending.UserCommand = "reanalyze"
+				alert = pending
+			}
+		}
 
 		metrics.AlertsReceived.WithLabelValues(alert.Source).Inc()
 		if err := workerPool.Submit(alert); err != nil {

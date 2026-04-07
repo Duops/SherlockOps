@@ -126,6 +126,14 @@ func (p *Pipeline) processManual(ctx context.Context, alert *domain.Alert) error
 				"message_id", ref.MessageID,
 				"error", err,
 			)
+		} else {
+			p.logger.Info("manual: pending saved",
+				"messenger", ref.Messenger,
+				"channel", ref.Channel,
+				"message_id", ref.MessageID,
+				"fingerprint", alert.Fingerprint,
+				"name", alert.Name,
+			)
 		}
 	}
 	metrics.AlertsAnalyzed.WithLabelValues("manual_pending").Inc()
@@ -143,8 +151,15 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 		return nil
 	}
 
-	// Check cache (unless reanalyze is requested).
-	if alert.UserCommand != "reanalyze" {
+	// Synthetic mention alerts (e.g. "thread-mention" produced by Slack/Teams
+	// listeners when @bot is pinged in a thread without a corresponding
+	// pending entry) must NOT touch the cache: their fingerprint is computed
+	// from a near-empty label set, which collides across unrelated threads
+	// and pollutes the cache with junk "I do not see alert data" responses.
+	skipCache := isSyntheticMention(alert)
+
+	// Check cache (unless reanalyze is requested or this is a synthetic mention).
+	if !skipCache && alert.UserCommand != "reanalyze" {
 		cached, err := p.cache.Get(ctx, alert.Fingerprint)
 		if err != nil {
 			return fmt.Errorf("pipeline: cache get: %w", err)
@@ -156,7 +171,9 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 			return p.send(ctx, alert, cached)
 		}
 	}
-	metrics.CacheMisses.Inc()
+	if !skipCache {
+		metrics.CacheMisses.Inc()
+	}
 
 	// Analyze via LLM.
 	start := time.Now()
@@ -170,12 +187,29 @@ func (p *Pipeline) processSinglePhase(ctx context.Context, alert *domain.Alert) 
 
 	recordAnalysisMetrics(alert, result, duration)
 
-	// Store in cache.
-	if err := p.cache.Set(ctx, result); err != nil {
-		p.logger.Warn("failed to cache result", "error", err)
+	// Store in cache (skip synthetic mentions to avoid cross-thread pollution).
+	if !skipCache {
+		if err := p.cache.Set(ctx, result); err != nil {
+			p.logger.Warn("failed to cache result", "error", err)
+		}
 	}
 
 	return p.send(ctx, alert, result)
+}
+
+// isSyntheticMention reports whether the alert was synthesized by a messenger
+// listener from a bare @bot mention with no corresponding pending alert. These
+// alerts are user-driven, ephemeral, and have no stable fingerprint — we must
+// not cache them.
+func isSyntheticMention(alert *domain.Alert) bool {
+	if alert == nil {
+		return false
+	}
+	switch alert.Name {
+	case "thread-mention", "teams-mention":
+		return true
+	}
+	return false
 }
 
 // processTwoPhase handles webhook-originated alerts with two-phase delivery.
@@ -207,6 +241,27 @@ func (p *Pipeline) processTwoPhase(ctx context.Context, alert *domain.Alert) err
 		}
 		if ref != nil {
 			refs = append(refs, ref)
+		}
+	}
+
+	// Persist the alert under each posted message ref so that a later
+	// "@bot analyze" reply in the thread can recover the original alert via
+	// PendingStore even when the pipeline runs in auto mode. Without this,
+	// mentions on top of auto-mode alerts hit a synthetic "thread-mention"
+	// alert and produce empty analyses.
+	if p.pending != nil {
+		for _, ref := range refs {
+			if ref == nil || ref.MessageID == "" {
+				continue
+			}
+			if err := p.pending.SavePending(ctx, ref, alert); err != nil {
+				p.logger.Warn("phase 1: save pending failed",
+					"messenger", ref.Messenger,
+					"channel", ref.Channel,
+					"message_id", ref.MessageID,
+					"error", err,
+				)
+			}
 		}
 	}
 
