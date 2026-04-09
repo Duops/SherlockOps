@@ -153,7 +153,10 @@ func TestSlackFetchParentMessage_EmptyMessages(t *testing.T) {
 	}
 }
 
-func TestSlackHandleEventPayload_MessageEvent(t *testing.T) {
+// TestSlackHandleEventPayload_MessageEvent verifies that plain human messages
+// are NOT processed as alerts. Alerts must arrive via webhook endpoints — the
+// Slack listener only handles @bot mentions and /analyze commands.
+func TestSlackHandleEventPayload_PlainMessageIgnored(t *testing.T) {
 	var mu sync.Mutex
 	var receivedAlert *domain.Alert
 
@@ -168,7 +171,7 @@ func TestSlackHandleEventPayload_MessageEvent(t *testing.T) {
 	payload := slackEventPayload{
 		Event: slackEvent{
 			Type:    "message",
-			Text:    "Server is down!",
+			Text:    "OOM был",
 			User:    "U123",
 			Channel: "C111",
 			TS:      "1234567890.000001",
@@ -180,13 +183,55 @@ func TestSlackHandleEventPayload_MessageEvent(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
+	if receivedAlert != nil {
+		t.Fatalf("plain human message must NOT trigger handler; got alert %+v", receivedAlert)
+	}
+}
+
+// TestSlackHandleEventPayload_MentionInThread verifies that @bot mention in a
+// thread IS processed (the only "message" event that should trigger the handler).
+func TestSlackHandleEventPayload_MentionInThread(t *testing.T) {
+	var mu sync.Mutex
+	var receivedAlert *domain.Alert
+
+	s := NewSlack("xoxb-test", "xapp-test", "secret", "#alerts", nil, testLogger())
+	s.botUserID = "U999"
+	s.handler = func(alert *domain.Alert) {
+		mu.Lock()
+		receivedAlert = alert
+		mu.Unlock()
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":       true,
+			"messages": []map[string]string{{"text": "original alert text"}},
+		})
+	}))
+	defer server.Close()
+	s.baseURL = server.URL
+
+	payload := slackEventPayload{
+		Event: slackEvent{
+			Type:     "message",
+			Text:     "<@U999> analyze",
+			User:     "U123",
+			Channel:  "C111",
+			TS:       "1234567890.000002",
+			ThreadTS: "1234567890.000001",
+		},
+	}
+
+	raw, _ := json.Marshal(payload)
+	s.handleEventPayload(context.Background(), raw)
+
+	mu.Lock()
+	defer mu.Unlock()
 	if receivedAlert == nil {
-		t.Fatal("expected handler to be called")
+		t.Fatal("@bot mention in thread should trigger handler")
 	}
 	if receivedAlert.Source != "slack" {
 		t.Errorf("expected source 'slack', got %q", receivedAlert.Source)
-	}
-	if receivedAlert.RawText != "Server is down!" {
 		t.Errorf("expected RawText 'Server is down!', got %q", receivedAlert.RawText)
 	}
 	if receivedAlert.ReplyTarget.ThreadID != "1234567890.000001" {

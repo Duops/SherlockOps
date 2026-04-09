@@ -820,8 +820,11 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 	}
 
 	// "message" event: treat as a mention only if it is a thread reply AND
-	// contains an explicit <@BOTID> token. Otherwise treat it as an alert
-	// posted by another integration (Alertmanager-Slack, etc.).
+	// contains an explicit <@BOTID> token. Plain human messages in the
+	// channel are NOT treated as alerts — alerts arrive via webhook
+	// endpoints (/webhook/alertmanager, /webhook/grafana, etc.), not through
+	// the Slack message stream. Without this gate, any random "OOM был" or
+	// "ok fixing" typed by a human would be ingested as a new alert.
 	if s.botUserID != "" && strings.Contains(evt.Text, "<@"+s.botUserID+">") && evt.ThreadTS != "" {
 		s.logger.Info("slack: handling mention inside thread message",
 			slog.String("channel", evt.Channel),
@@ -831,9 +834,8 @@ func (s *SlackMessenger) handleEventPayload(ctx context.Context, raw json.RawMes
 		return
 	}
 
-	// Treat as an alert message from Alertmanager bot or similar.
-	s.logger.Debug("slack: treating message as alert", slog.String("channel", evt.Channel))
-	s.handleAlertMessage(evt)
+	// All other channel messages are ignored. Alerts come through webhooks.
+	s.logger.Debug("slack: ignoring regular channel message (not a mention)")
 }
 
 // handleBotMention processes a @bot mention in a thread.
