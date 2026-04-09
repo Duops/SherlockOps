@@ -100,6 +100,11 @@ func main() {
 		logger.Info("custom token pricing set", "input_per_m", cfg.LLM.InputTokenCost, "output_per_m", cfg.LLM.OutputTokenCost)
 	}
 
+	// Context-budget knobs: cap big tool outputs and stop iterating before
+	// the LLM provider's hard context limit so we emit a best-effort answer
+	// instead of a 400 "prompt too long" error.
+	envAnalyzer.SetContextLimits(cfg.LLM.MaxToolOutputChars, cfg.LLM.ContextSoftLimitTokens)
+
 	// Set per-environment system prompts.
 	for envName, envCfg := range cfg.Environments {
 		if envCfg.LLM != nil && envCfg.LLM.SystemPrompt != "" {

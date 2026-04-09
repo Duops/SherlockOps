@@ -27,6 +27,18 @@ llm:
   # Set these for custom/self-hosted models where auto-detect won't work
   input_token_cost: 0
   output_token_cost: 0
+  # Context-budget guards — prevent "prompt too long" errors on deep tool loops.
+  #
+  # max_tool_output_chars: hard cap on a single tool result's content BEFORE
+  #   it is sent to the LLM. Big blobs (k8s listings, loki log chunks, long
+  #   metric series) are truncated with a marker telling the model to narrow
+  #   its query. 0 = no cap. Default 20000 (~5k tokens).
+  max_tool_output_chars: 20000
+  # context_soft_limit_tokens: running input+output token budget. When
+  #   exceeded, the analyzer stops iterating and returns a best-effort answer
+  #   instead of surfacing a provider 400 "prompt too long" error. 0 = no
+  #   limit. Default 800000 (leaves headroom below Anthropic's 1M cap).
+  context_soft_limit_tokens: 800000
 
 # ─── Messengers ───────────────────────────────────────────────
 messengers:
