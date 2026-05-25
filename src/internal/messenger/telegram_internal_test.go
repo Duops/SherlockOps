@@ -470,7 +470,7 @@ func TestFormatTelegramAlert_HTML(t *testing.T) {
 		},
 	}
 
-	text := formatTelegramAlert(alert, "HTML")
+	text := formatTelegramAlert(alert, "HTML", DefaultDisplayOptions())
 
 	if !contains(text, "<b>[FIRING] HighCPU</b>") {
 		t.Errorf("expected HTML bold status and name, got: %s", text)
@@ -500,7 +500,7 @@ func TestFormatTelegramAlert_Markdown(t *testing.T) {
 		Labels:   map[string]string{"host": "node-1"},
 	}
 
-	text := formatTelegramAlert(alert, "Markdown")
+	text := formatTelegramAlert(alert, "Markdown", DefaultDisplayOptions())
 
 	if !contains(text, "*[RESOLVED] DiskFull*") {
 		t.Errorf("expected Markdown status and name, got: %s", text)
@@ -520,7 +520,7 @@ func TestFormatTelegramAlert_NoOptionalFields(t *testing.T) {
 		Labels: map[string]string{},
 	}
 
-	text := formatTelegramAlert(alert, "HTML")
+	text := formatTelegramAlert(alert, "HTML", DefaultDisplayOptions())
 
 	if !contains(text, "[FIRING] SimpleAlert") {
 		t.Errorf("expected status and name, got: %s", text)

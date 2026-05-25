@@ -89,9 +89,21 @@ type LLMConfig struct {
 
 // MessengersConfig holds all messenger configurations.
 type MessengersConfig struct {
-	Slack    SlackConfig    `yaml:"slack"`
-	Telegram TelegramConfig `yaml:"telegram"`
-	Teams    TeamsConfig    `yaml:"teams"`
+	Slack    SlackConfig        `yaml:"slack"`
+	Telegram TelegramConfig     `yaml:"telegram"`
+	Teams    TeamsConfig        `yaml:"teams"`
+	Display  AlertDisplayConfig `yaml:"alert_display"`
+}
+
+// AlertDisplayConfig toggles which optional fields are rendered in the alert
+// message sent to messengers. All fields default to true; set to false to hide.
+type AlertDisplayConfig struct {
+	Level       bool `yaml:"level"`
+	Env         bool `yaml:"env"`
+	Target      bool `yaml:"target"`
+	Summary     bool `yaml:"summary"`
+	Description bool `yaml:"description"`
+	Labels      bool `yaml:"labels"`
 }
 
 // TeamsConfig holds Microsoft Teams messenger settings.
@@ -313,6 +325,14 @@ func applyDefaults(cfg *Config) {
 
 	cfg.Messengers.Slack.DefaultChannel = "#alerts"
 	cfg.Messengers.Telegram.ParseMode = "HTML"
+	cfg.Messengers.Display = AlertDisplayConfig{
+		Level:       true,
+		Env:         true,
+		Target:      true,
+		Summary:     true,
+		Description: true,
+		Labels:      true,
+	}
 
 	cfg.Cache.TTL = "24h"
 	cfg.Cache.Path = "/data/cache.db"

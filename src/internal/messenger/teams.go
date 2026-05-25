@@ -42,6 +42,8 @@ type TeamsMessenger struct {
 	// Overridable for testing.
 	tokenURL       string
 	botFrameworkURL string
+
+	display DisplayOptions
 }
 
 // NewTeams creates a new TeamsMessenger.
@@ -61,7 +63,13 @@ func NewTeams(tenantID, clientID, clientSecret, webhookURL, defaultTeam, default
 		logger:          logger,
 		tokenURL:        fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenantID),
 		botFrameworkURL: "https://smba.trafficmanager.net/teams",
+		display:         DefaultDisplayOptions(),
 	}
+}
+
+// SetDisplayOptions overrides which fields are rendered in the alert message.
+func (t *TeamsMessenger) SetDisplayOptions(opts DisplayOptions) {
+	t.display = opts
 }
 
 func (t *TeamsMessenger) Name() string {
@@ -122,7 +130,7 @@ func (t *TeamsMessenger) Stop(_ context.Context) error {
 
 // SendAlert posts the raw alert as an Adaptive Card and returns a MessageRef (Phase 1).
 func (t *TeamsMessenger) SendAlert(ctx context.Context, alert *domain.Alert) (*domain.MessageRef, error) {
-	card := buildAlertCard(alert)
+	card := buildAlertCard(alert, t.display)
 	activityID, err := t.sendCardWithID(ctx, alert, card)
 	if err != nil {
 		return nil, err
@@ -451,7 +459,7 @@ func severityEmoji(severity domain.Severity) string {
 }
 
 // buildAlertCard constructs an Adaptive Card for a raw alert (Phase 1).
-func buildAlertCard(alert *domain.Alert) adaptiveCard {
+func buildAlertCard(alert *domain.Alert, opts DisplayOptions) adaptiveCard {
 	emoji := severityEmoji(alert.Severity)
 	status := "FIRING"
 	if alert.Status == domain.StatusResolved {
@@ -463,7 +471,7 @@ func buildAlertCard(alert *domain.Alert) adaptiveCard {
 		{Type: "TextBlock", Text: title, Weight: "Bolder", Size: "Medium"},
 	}
 
-	if alert.Severity != "" {
+	if opts.Level && alert.Severity != "" {
 		bodyItems = append(bodyItems, cardElement{
 			Type:     "TextBlock",
 			Text:     fmt.Sprintf("Severity: %s | Status: %s", alert.Severity, alert.Status),
@@ -471,12 +479,57 @@ func buildAlertCard(alert *domain.Alert) adaptiveCard {
 		})
 	}
 
-	if summary := alert.Annotations["summary"]; summary != "" {
-		bodyItems = append(bodyItems, cardElement{
-			Type: "TextBlock",
-			Text: summary,
-			Wrap: true,
-		})
+	if opts.Env {
+		if env := alert.Labels["cluster"]; env != "" {
+			bodyItems = append(bodyItems, cardElement{
+				Type:     "TextBlock",
+				Text:     fmt.Sprintf("Env: %s", env),
+				IsSubtle: true,
+			})
+		}
+	}
+
+	if opts.Target {
+		if tt, tn := extractTarget(alert); tn != "" {
+			bodyItems = append(bodyItems, cardElement{
+				Type:     "TextBlock",
+				Text:     fmt.Sprintf("Target: %s: %s", tt, tn),
+				IsSubtle: true,
+			})
+		}
+	}
+
+	if opts.Summary {
+		if summary := alert.Annotations["summary"]; summary != "" {
+			bodyItems = append(bodyItems, cardElement{
+				Type: "TextBlock",
+				Text: summary,
+				Wrap: true,
+			})
+		}
+	}
+
+	if opts.Description {
+		if description := alert.Annotations["description"]; description != "" {
+			bodyItems = append(bodyItems, cardElement{
+				Type: "TextBlock",
+				Text: description,
+				Wrap: true,
+			})
+		}
+	}
+
+	if opts.Labels {
+		targetType, _ := extractTarget(alert)
+		ctxText := formatLabelsContext(alert.Labels, targetType)
+		if ctxText != "" {
+			bodyItems = append(bodyItems, cardElement{
+				Type:     "TextBlock",
+				Text:     ctxText,
+				IsSubtle: true,
+				Wrap:     true,
+			})
+		}
 	}
 
 	return adaptiveCard{

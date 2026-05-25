@@ -39,6 +39,8 @@ type SlackMessenger struct {
 	// fire BOTH for a single user mention) we only handle the event once.
 	recentEvents   map[string]time.Time
 	recentEventsMu sync.Mutex
+
+	display DisplayOptions
 }
 
 // NewSlack creates a new SlackMessenger.
@@ -53,7 +55,13 @@ func NewSlack(botToken, appToken, signingSecret, defaultChannel string, listenCh
 		logger:         logger,
 		baseURL:        "https://slack.com/api",
 		recentEvents:   make(map[string]time.Time),
+		display:        DefaultDisplayOptions(),
 	}
+}
+
+// SetDisplayOptions overrides which fields are rendered in the alert message.
+func (s *SlackMessenger) SetDisplayOptions(opts DisplayOptions) {
+	s.display = opts
 }
 
 // recentEventTTL is how long an event key stays in the dedupe map before
@@ -149,11 +157,17 @@ func (s *SlackMessenger) SendAlert(ctx context.Context, alert *domain.Alert) (*d
 	} else {
 		headerText = fmt.Sprintf("*[%s] %s*", status, alert.Name)
 	}
-	if alert.Severity != "" {
+	if s.display.Level && alert.Severity != "" {
 		headerText += fmt.Sprintf("\nLevel: `%s`", alert.Severity)
 	}
-	if env := alert.Labels["cluster"]; env != "" {
-		headerText += fmt.Sprintf(" | Env: `%s`", env)
+	if s.display.Env {
+		if env := alert.Labels["cluster"]; env != "" {
+			if s.display.Level && alert.Severity != "" {
+				headerText += fmt.Sprintf(" | Env: `%s`", env)
+			} else {
+				headerText += fmt.Sprintf("\nEnv: `%s`", env)
+			}
+		}
 	}
 
 	blocks := []map[string]interface{}{
@@ -167,58 +181,77 @@ func (s *SlackMessenger) SendAlert(ctx context.Context, alert *domain.Alert) (*d
 	}
 
 	// Targets: single or grouped.
-	if count > 1 {
-		var targets strings.Builder
-		targets.WriteString("Targets:\n")
-		for _, ga := range alert.GroupedAlerts {
-			tt, tn := extractTarget(ga)
-			instance := ga.Labels["instance"]
-			if instance != "" {
-				targets.WriteString(fmt.Sprintf("• `%s: %s` (%s)\n", tt, tn, instance))
-			} else {
-				targets.WriteString(fmt.Sprintf("• `%s: %s`\n", tt, tn))
+	if s.display.Target {
+		if count > 1 {
+			var targets strings.Builder
+			targets.WriteString("Targets:\n")
+			for _, ga := range alert.GroupedAlerts {
+				tt, tn := extractTarget(ga)
+				instance := ga.Labels["instance"]
+				if instance != "" {
+					targets.WriteString(fmt.Sprintf("• `%s: %s` (%s)\n", tt, tn, instance))
+				} else {
+					targets.WriteString(fmt.Sprintf("• `%s: %s`\n", tt, tn))
+				}
 			}
+			blocks = append(blocks, map[string]interface{}{
+				"type": "section",
+				"text": map[string]interface{}{
+					"type": "mrkdwn",
+					"text": targets.String(),
+				},
+			})
+		} else if targetName != "" {
+			blocks = append(blocks, map[string]interface{}{
+				"type": "section",
+				"text": map[string]interface{}{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("Target: `%s: %s`", targetType, targetName),
+				},
+			})
 		}
-		blocks = append(blocks, map[string]interface{}{
-			"type": "section",
-			"text": map[string]interface{}{
-				"type": "mrkdwn",
-				"text": targets.String(),
-			},
-		})
-	} else if targetName != "" {
-		blocks = append(blocks, map[string]interface{}{
-			"type": "section",
-			"text": map[string]interface{}{
-				"type": "mrkdwn",
-				"text": fmt.Sprintf("Target: `%s: %s`", targetType, targetName),
-			},
-		})
 	}
 
 	// Summary from annotations.
-	if summary := alert.Annotations["summary"]; summary != "" {
-		blocks = append(blocks, map[string]interface{}{
-			"type": "section",
-			"text": map[string]interface{}{
-				"type": "mrkdwn",
-				"text": summary,
-			},
-		})
+	if s.display.Summary {
+		if summary := alert.Annotations["summary"]; summary != "" {
+			blocks = append(blocks, map[string]interface{}{
+				"type": "section",
+				"text": map[string]interface{}{
+					"type": "mrkdwn",
+					"text": summary,
+				},
+			})
+		}
+	}
+
+	// Description from annotations.
+	if s.display.Description {
+		if description := alert.Annotations["description"]; description != "" {
+			blocks = append(blocks, map[string]interface{}{
+				"type": "section",
+				"text": map[string]interface{}{
+					"type": "mrkdwn",
+					"text": description,
+				},
+			})
+		}
 	}
 
 	// Context: secondary labels in small text.
-	ctxText := formatLabelsContext(alert.Labels, targetType)
-	if ctxText != "" {
-		blocks = append(blocks, map[string]interface{}{
-			"type": "context",
-			"elements": []map[string]interface{}{
-				{
-					"type": "mrkdwn",
-					"text": ctxText,
+	if s.display.Labels {
+		ctxText := formatLabelsContext(alert.Labels, targetType)
+		if ctxText != "" {
+			blocks = append(blocks, map[string]interface{}{
+				"type": "context",
+				"elements": []map[string]interface{}{
+					{
+						"type": "mrkdwn",
+						"text": ctxText,
+					},
 				},
-			},
-		})
+			})
+		}
 	}
 
 	// Action buttons: Query, Runbook, Silence.

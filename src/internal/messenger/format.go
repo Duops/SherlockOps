@@ -10,6 +10,29 @@ import (
 	"github.com/Duops/SherlockOps/internal/pricing"
 )
 
+// DisplayOptions toggles which optional fields appear in the rendered alert
+// message. All fields default to true; set to false to hide.
+type DisplayOptions struct {
+	Level       bool
+	Env         bool
+	Target      bool
+	Summary     bool
+	Description bool
+	Labels      bool
+}
+
+// DefaultDisplayOptions returns DisplayOptions with everything enabled.
+func DefaultDisplayOptions() DisplayOptions {
+	return DisplayOptions{
+		Level:       true,
+		Env:         true,
+		Target:      true,
+		Summary:     true,
+		Description: true,
+		Labels:      true,
+	}
+}
+
 // formatCacheBadge returns a cache indicator string if the result is from cache.
 // Returns empty string for fresh analysis.
 func formatCacheBadge(result *domain.AnalysisResult) string {
