@@ -75,6 +75,16 @@ messengers:
     default_channel: ""
     listen_port: 3978    # Bot Framework listener port
 
+  # Toggle which fields appear in the alert message. All default to true.
+  # Set any to false to hide that section across all enabled messengers.
+  alert_display:
+    level: true        # "Level: warning" badge
+    env: true          # "Env: prod" from labels.cluster
+    target: true       # "Target: pod: vector-9tqsq"
+    summary: true      # annotations.summary
+    description: true  # annotations.description
+    labels: true       # secondary labels footer (namespace=…, project=…)
+
 # ─── Cache ────────────────────────────────────────────────────
 cache:
   ttl: "24h"

@@ -136,6 +136,15 @@ func main() {
 	// 5. Messengers.
 	var messengers []domain.Messenger
 
+	displayOpts := messenger.DisplayOptions{
+		Level:       cfg.Messengers.Display.Level,
+		Env:         cfg.Messengers.Display.Env,
+		Target:      cfg.Messengers.Display.Target,
+		Summary:     cfg.Messengers.Display.Summary,
+		Description: cfg.Messengers.Display.Description,
+		Labels:      cfg.Messengers.Display.Labels,
+	}
+
 	if cfg.Messengers.Slack.Enabled {
 		slackMsg := messenger.NewSlack(
 			cfg.Messengers.Slack.BotToken,
@@ -145,6 +154,7 @@ func main() {
 			cfg.Messengers.Slack.ListenChannels,
 			logger,
 		)
+		slackMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, slackMsg)
 		logger.Info("messenger enabled", "name", "slack")
 	}
@@ -157,6 +167,7 @@ func main() {
 			cfg.Messengers.Telegram.ParseMode,
 			logger,
 		)
+		tgMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, tgMsg)
 		logger.Info("messenger enabled", "name", "telegram")
 	}
@@ -172,6 +183,7 @@ func main() {
 			cfg.Messengers.Teams.ListenPort,
 			logger,
 		)
+		teamsMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, teamsMsg)
 		logger.Info("messenger enabled", "name", "teams")
 	}

@@ -324,7 +324,7 @@ func TestBuildAlertCard(t *testing.T) {
 		},
 	}
 
-	card := buildAlertCard(alert)
+	card := buildAlertCard(alert, DefaultDisplayOptions())
 
 	if card.Type != "AdaptiveCard" {
 		t.Errorf("expected type AdaptiveCard, got %q", card.Type)
@@ -349,7 +349,7 @@ func TestBuildAlertCard_Resolved(t *testing.T) {
 		Status: domain.StatusResolved,
 	}
 
-	card := buildAlertCard(alert)
+	card := buildAlertCard(alert, DefaultDisplayOptions())
 	if !strings.Contains(card.Body[0].Text, "[RESOLVED]") {
 		t.Errorf("expected RESOLVED in title, got %q", card.Body[0].Text)
 	}
@@ -361,7 +361,7 @@ func TestBuildAlertCard_NoSeverity(t *testing.T) {
 		Status: domain.StatusFiring,
 	}
 
-	card := buildAlertCard(alert)
+	card := buildAlertCard(alert, DefaultDisplayOptions())
 	// Should only have title (no severity block, no summary).
 	if len(card.Body) != 1 {
 		t.Errorf("expected 1 body element for alert without severity/summary, got %d", len(card.Body))
