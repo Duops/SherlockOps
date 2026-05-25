@@ -85,6 +85,7 @@ type TelegramMessenger struct {
 	offset      int64
 	baseURL     string // overridable for testing
 	mu          sync.Mutex
+	display     DisplayOptions
 }
 
 // NewTelegram creates a new TelegramMessenger.
@@ -100,7 +101,13 @@ func NewTelegram(botToken string, defaultChat int64, listenChats []int64, parseM
 		client:      &http.Client{Timeout: 60 * time.Second},
 		logger:      logger,
 		baseURL:     fmt.Sprintf("https://api.telegram.org/bot%s", botToken),
+		display:     DefaultDisplayOptions(),
 	}
+}
+
+// SetDisplayOptions overrides which fields are rendered in the alert message.
+func (t *TelegramMessenger) SetDisplayOptions(opts DisplayOptions) {
+	t.display = opts
 }
 
 func (t *TelegramMessenger) Name() string {
@@ -134,7 +141,7 @@ func (t *TelegramMessenger) Stop(_ context.Context) error {
 // SendAlert posts a rich alert to a Telegram chat and returns a MessageRef (Phase 1).
 func (t *TelegramMessenger) SendAlert(ctx context.Context, alert *domain.Alert) (*domain.MessageRef, error) {
 	chatID, _ := t.resolveTarget(alert)
-	text := formatTelegramAlert(alert, t.parseMode)
+	text := formatTelegramAlert(alert, t.parseMode, t.display)
 	msgID, err := t.sendMessage(ctx, chatID, 0, text)
 	if err != nil {
 		return nil, err
@@ -152,7 +159,7 @@ func (t *TelegramMessenger) SendAnalysisReply(ctx context.Context, ref *domain.M
 	chatID, _ := strconv.ParseInt(ref.Channel, 10, 64)
 	msgID, _ := strconv.ParseInt(ref.MessageID, 10, 64)
 
-	alertText := formatTelegramAlert(ref.Alert, t.parseMode)
+	alertText := formatTelegramAlert(ref.Alert, t.parseMode, t.display)
 	analysisText := formatTelegramAnalysisRich(result, t.parseMode)
 	newText := alertText + "\n\n" + analysisText
 	return t.editMessage(ctx, chatID, msgID, newText)
@@ -239,7 +246,7 @@ func formatTelegramAnalysis(alert *domain.Alert, result *domain.AnalysisResult, 
 }
 
 // formatTelegramAlert formats a rich alert message for Telegram (Phase 1).
-func formatTelegramAlert(alert *domain.Alert, parseMode string) string {
+func formatTelegramAlert(alert *domain.Alert, parseMode string, opts DisplayOptions) string {
 	sev := alertSeverityEmoji(alert.Severity, alert.Status)
 	status := "FIRING"
 	if alert.Status == domain.StatusResolved {
@@ -247,44 +254,67 @@ func formatTelegramAlert(alert *domain.Alert, parseMode string) string {
 	}
 
 	targetType, targetName := extractTarget(alert)
+	summary := alert.Annotations["summary"]
+	description := alert.Annotations["description"]
+	env := alert.Labels["cluster"]
+	showLevel := opts.Level && alert.Severity != ""
+	showEnv := opts.Env && env != ""
 
 	var sb strings.Builder
 
 	if parseMode == "HTML" {
 		sb.WriteString(fmt.Sprintf("%s <b>[%s] %s</b>", sev, status, alert.Name))
-		if alert.Severity != "" {
+		if showLevel {
 			sb.WriteString(fmt.Sprintf("\nLevel: <code>%s</code>", alert.Severity))
 		}
-		if env := alert.Labels["cluster"]; env != "" {
-			sb.WriteString(fmt.Sprintf(" | Env: <code>%s</code>", env))
+		if showEnv {
+			if showLevel {
+				sb.WriteString(fmt.Sprintf(" | Env: <code>%s</code>", env))
+			} else {
+				sb.WriteString(fmt.Sprintf("\nEnv: <code>%s</code>", env))
+			}
 		}
-		if targetName != "" {
+		if opts.Target && targetName != "" {
 			sb.WriteString(fmt.Sprintf("\n\nTarget: <code>%s: %s</code>", targetType, targetName))
 		}
-		if summary := alert.Annotations["summary"]; summary != "" {
+		if opts.Summary && summary != "" {
 			sb.WriteString(fmt.Sprintf("\nMessage: %s", summary))
 		}
-		ctxText := formatLabelsContext(alert.Labels, targetType)
-		if ctxText != "" {
-			sb.WriteString(fmt.Sprintf("\n\n<i>%s</i>", ctxText))
+		if opts.Description && description != "" {
+			sb.WriteString(fmt.Sprintf("\nDescription: %s", description))
+		}
+		if opts.Labels {
+			ctxText := formatLabelsContext(alert.Labels, targetType)
+			if ctxText != "" {
+				sb.WriteString(fmt.Sprintf("\n\n<i>%s</i>", ctxText))
+			}
 		}
 	} else {
 		sb.WriteString(fmt.Sprintf("%s *[%s] %s*", sev, status, alert.Name))
-		if alert.Severity != "" {
+		if showLevel {
 			sb.WriteString(fmt.Sprintf("\nLevel: `%s`", alert.Severity))
 		}
-		if env := alert.Labels["cluster"]; env != "" {
-			sb.WriteString(fmt.Sprintf(" | Env: `%s`", env))
+		if showEnv {
+			if showLevel {
+				sb.WriteString(fmt.Sprintf(" | Env: `%s`", env))
+			} else {
+				sb.WriteString(fmt.Sprintf("\nEnv: `%s`", env))
+			}
 		}
-		if targetName != "" {
+		if opts.Target && targetName != "" {
 			sb.WriteString(fmt.Sprintf("\n\nTarget: `%s: %s`", targetType, targetName))
 		}
-		if summary := alert.Annotations["summary"]; summary != "" {
+		if opts.Summary && summary != "" {
 			sb.WriteString(fmt.Sprintf("\nMessage: %s", summary))
 		}
-		ctxText := formatLabelsContext(alert.Labels, targetType)
-		if ctxText != "" {
-			sb.WriteString(fmt.Sprintf("\n\n_%s_", ctxText))
+		if opts.Description && description != "" {
+			sb.WriteString(fmt.Sprintf("\nDescription: %s", description))
+		}
+		if opts.Labels {
+			ctxText := formatLabelsContext(alert.Labels, targetType)
+			if ctxText != "" {
+				sb.WriteString(fmt.Sprintf("\n\n_%s_", ctxText))
+			}
 		}
 	}
 
