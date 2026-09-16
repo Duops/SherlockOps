@@ -208,6 +208,8 @@ mcp:
 # Each environment gets its own tools, MCP servers, and system prompt.
 # Selected via X-Environment HTTP header in webhook requests.
 # If not set, top-level "tools" and "mcp" are used as default.
+# Top-level "mcp.clients" are inherited by every environment that does not
+# declare its own "mcp.clients" — configure a shared MCP server once here.
 #
 # environments:
 #   prod:

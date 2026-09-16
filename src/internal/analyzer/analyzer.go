@@ -547,6 +547,7 @@ func buildResult(alert *domain.Alert, text string, tools []toolRecord, resolver 
 		AlertFingerprint: alert.Fingerprint,
 		AlertName:        alert.Name,
 		Source:           alert.Source,
+		Environment:      alert.Environment,
 		Severity:         string(alert.Severity),
 		Text:             text,
 		ToolsUsed:        names,

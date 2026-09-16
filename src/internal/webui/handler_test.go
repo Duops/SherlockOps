@@ -523,3 +523,44 @@ var errExpected = stubErr("boom")
 type stubErr string
 
 func (e stubErr) Error() string { return string(e) }
+
+func TestApiAlerts_IncludesEnvironment(t *testing.T) {
+	now := time.Now()
+	c := &mockCache{
+		alerts: []*domain.AnalysisResult{
+			{AlertFingerprint: "fp-analyzed", Text: "analysis", Environment: "pay-prod", CachedAt: now},
+		},
+	}
+	h := New(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.SetPendingLister(&stubPendingLister{
+		items: []PendingItem{
+			{Alert: &domain.Alert{Fingerprint: "fp-pending", Environment: "easysend-dev"}, CreatedAt: now},
+		},
+	})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/alerts?limit=10", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var body struct {
+		Alerts []struct {
+			Fingerprint string `json:"alert_fingerprint"`
+			Environment string `json:"environment"`
+		} `json:"alerts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	envs := map[string]string{}
+	for _, a := range body.Alerts {
+		envs[a.Fingerprint] = a.Environment
+	}
+	if envs["fp-analyzed"] != "pay-prod" {
+		t.Errorf("analyzed environment = %q, want %q", envs["fp-analyzed"], "pay-prod")
+	}
+	if envs["fp-pending"] != "easysend-dev" {
+		t.Errorf("pending environment = %q, want %q", envs["fp-pending"], "easysend-dev")
+	}
+}

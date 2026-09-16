@@ -304,6 +304,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnvOverrides(cfg)
+	inheritDefaultMCPClients(cfg)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
@@ -348,6 +349,20 @@ func applyDefaults(cfg *Config) {
 	cfg.Pipeline.MaxConcurrentLLM = 3
 
 	cfg.Runbooks.Dir = "/data/runbooks"
+}
+
+// inheritDefaultMCPClients copies top-level mcp.clients into environments without their own.
+func inheritDefaultMCPClients(cfg *Config) {
+	if len(cfg.MCP.Clients) == 0 {
+		return
+	}
+	for name, env := range cfg.Environments {
+		if len(env.MCP.Clients) > 0 {
+			continue
+		}
+		env.MCP.Clients = append([]MCPClientConfig(nil), cfg.MCP.Clients...)
+		cfg.Environments[name] = env
+	}
 }
 
 func applyEnvOverrides(cfg *Config) {
