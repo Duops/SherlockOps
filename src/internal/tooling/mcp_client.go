@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -75,6 +76,7 @@ type MCPClient struct {
 	token     string
 	headers   map[string]string
 	client    *http.Client
+	mu        sync.RWMutex
 	tools     []domain.Tool
 	sessionID string // Mcp-Session-Id from server
 	idCounter atomic.Int64
@@ -160,21 +162,26 @@ func (c *MCPClient) handshake(ctx context.Context) error {
 		return fmt.Errorf("parse tools/list: %w", err)
 	}
 
-	c.tools = make([]domain.Tool, 0, len(result.Tools))
+	tools := make([]domain.Tool, 0, len(result.Tools))
 	for _, t := range result.Tools {
-		c.tools = append(c.tools, domain.Tool{
+		tools = append(tools, domain.Tool{
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
 		})
 	}
+	c.mu.Lock()
+	c.tools = tools
+	c.mu.Unlock()
 
-	c.logger.Info("mcp client connected", "name", c.name, "url", c.url, "tools", len(c.tools))
+	c.logger.Info("mcp client connected", "name", c.name, "url", c.url, "tools", len(tools))
 	return nil
 }
 
 // ListTools returns the cached tools discovered via Connect.
 func (c *MCPClient) ListTools(_ context.Context) ([]domain.Tool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.tools, nil
 }
 
@@ -345,3 +352,9 @@ func (c *MCPClient) applyAuth(req *http.Request) {
 		req.Header.Set("Authorization", "Basic "+encoded)
 	}
 }
+
+// Target returns the MCP server URL.
+func (c *MCPClient) Target() string { return c.url }
+
+// Name returns the configured client name.
+func (c *MCPClient) Name() string { return c.name }

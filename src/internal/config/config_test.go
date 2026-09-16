@@ -535,3 +535,59 @@ environments:
 		t.Errorf("dev should keep its own mcp clients, got %+v", dev.MCP.Clients)
 	}
 }
+
+func TestHealthAndStatsDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Health.ToolCheckIntervalDuration() != time.Minute {
+		t.Errorf("health.tool_check_interval default = %v, want 1m", cfg.Health.ToolCheckIntervalDuration())
+	}
+	if cfg.Stats.RetentionDuration() != 90*24*time.Hour {
+		t.Errorf("stats.retention default = %v, want 2160h", cfg.Stats.RetentionDuration())
+	}
+}
+
+func TestHealthAndStatsFromFile(t *testing.T) {
+	content := `
+health:
+  tool_check_interval: "5m"
+stats:
+  retention: "720h"
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Health.ToolCheckIntervalDuration() != 5*time.Minute {
+		t.Errorf("tool_check_interval = %v, want 5m", cfg.Health.ToolCheckIntervalDuration())
+	}
+	if cfg.Stats.RetentionDuration() != 720*time.Hour {
+		t.Errorf("retention = %v, want 720h", cfg.Stats.RetentionDuration())
+	}
+}
+
+func TestHealthAndStatsInvalidDurations(t *testing.T) {
+	content := `
+health:
+  tool_check_interval: "soon"
+stats:
+  retention: "90d"
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "health.tool_check_interval") || !strings.Contains(err.Error(), "stats.retention") {
+		t.Errorf("expected both fields in error, got: %v", err)
+	}
+}

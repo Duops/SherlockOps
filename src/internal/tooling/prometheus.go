@@ -462,3 +462,5 @@ func (p *PrometheusExecutor) execSeries(ctx context.Context, call domain.ToolCal
 	return &domain.ToolResult{CallID: call.ID, Content: sb.String()}, nil
 }
 
+// Target returns the Prometheus-compatible endpoint URL.
+func (p *PrometheusExecutor) Target() string { return p.url }

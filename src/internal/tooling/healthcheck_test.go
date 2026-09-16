@@ -48,7 +48,7 @@ func TestCheckHealth_HealthCheckOK(t *testing.T) {
 	}
 	reg.Register(exec)
 
-	CheckHealth(context.Background(), reg, logger)
+	CheckHealth(context.Background(), "default", reg, logger)
 
 	if !exec.checkCall {
 		t.Error("expected HealthCheck to be called")
@@ -69,7 +69,7 @@ func TestCheckHealth_HealthCheckFailed(t *testing.T) {
 	}
 	reg.Register(exec)
 
-	CheckHealth(context.Background(), reg, logger)
+	CheckHealth(context.Background(), "default", reg, logger)
 
 	if !exec.checkCall {
 		t.Error("expected HealthCheck to be called")
@@ -89,7 +89,7 @@ func TestCheckHealth_NoHealthChecker(t *testing.T) {
 	}
 	reg.Register(exec)
 
-	CheckHealth(context.Background(), reg, logger)
+	CheckHealth(context.Background(), "default", reg, logger)
 
 	if !strings.Contains(buf.String(), "tool registered (no health check)") {
 		t.Errorf("expected 'tool registered (no health check)' in log, got: %s", buf.String())
@@ -104,7 +104,7 @@ func TestCheckHealth_ListToolsError(t *testing.T) {
 	exec := &mockExecutor{listErr: fmt.Errorf("list failed")}
 	reg.Register(exec)
 
-	CheckHealth(context.Background(), reg, logger)
+	CheckHealth(context.Background(), "default", reg, logger)
 
 	if !strings.Contains(buf.String(), "cannot list tools") {
 		t.Errorf("expected 'cannot list tools' in log, got: %s", buf.String())
@@ -119,7 +119,7 @@ func TestCheckHealth_EmptyToolList(t *testing.T) {
 	exec := &mockExecutor{tools: []domain.Tool{}}
 	reg.Register(exec)
 
-	CheckHealth(context.Background(), reg, logger)
+	CheckHealth(context.Background(), "default", reg, logger)
 
 	if !strings.Contains(buf.String(), "unknown") {
 		t.Errorf("expected 'unknown' tool name in log for empty tools, got: %s", buf.String())
@@ -137,7 +137,7 @@ func TestCheckHealth_ToolNameParsing(t *testing.T) {
 	}
 	reg.Register(exec)
 
-	CheckHealth(context.Background(), reg, logger)
+	CheckHealth(context.Background(), "default", reg, logger)
 
 	if !strings.Contains(buf.String(), "myprefix") {
 		t.Errorf("expected 'myprefix' in log, got: %s", buf.String())
@@ -274,13 +274,13 @@ func TestLokiExecutor_HealthCheck_ConnectionError(t *testing.T) {
 }
 
 func TestMCPClient_HealthCheck_NoTools(t *testing.T) {
-	client := NewMCPClient("test", "http://localhost", "", "", nil, testLogger())
+	client := NewMCPClient("test", "http://127.0.0.1:1", "", "", nil, testLogger())
 	err := client.HealthCheck(context.Background())
 	if err == nil {
-		t.Error("expected error for no tools")
+		t.Fatal("expected error when server is unreachable")
 	}
-	if !strings.Contains(err.Error(), "no tools discovered") {
-		t.Errorf("expected 'no tools discovered', got: %v", err)
+	if !strings.Contains(err.Error(), "mcp connect") {
+		t.Errorf("expected reconnect attempt error, got: %v", err)
 	}
 }
 

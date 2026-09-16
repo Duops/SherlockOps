@@ -107,6 +107,10 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 		db.Close()
 		return nil, fmt.Errorf("cache: create pending index: %w", err)
 	}
+	if err := createEventsTable(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return &SQLiteCache{
 		db:        db,

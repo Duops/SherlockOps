@@ -5,58 +5,108 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/Duops/SherlockOps/internal/domain"
 )
 
 // HealthChecker is an optional interface that tool executors can implement
-// to provide a lightweight connectivity check at startup.
+// to provide a lightweight connectivity check.
 type HealthChecker interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// CheckHealth runs health checks on all registered executors in a registry.
-func CheckHealth(ctx context.Context, reg *Registry, logger *slog.Logger) {
+// Targeter is an optional interface reporting what an executor connects to.
+type Targeter interface {
+	Target() string
+}
+
+// Namer is an optional interface for executors named in config (e.g. MCP clients).
+type Namer interface {
+	Name() string
+}
+
+// CheckHealth probes all executors in a registry, logs each outcome with the env name, and returns the results.
+func CheckHealth(ctx context.Context, env string, reg *Registry, logger *slog.Logger) []domain.ToolHealth {
+	results := checkRegistry(ctx, env, reg)
+	for _, r := range results {
+		attrs := []any{"env", r.Environment, "tool", r.Tool, "target", r.Target, "tools_count", r.ToolsCount}
+		switch r.Status {
+		case domain.ToolHealthFailed:
+			logger.Error("tool health check FAILED", append(attrs, "error", r.Error)...)
+		case domain.ToolHealthOK:
+			logger.Info("tool health check OK", append(attrs, "latency_ms", r.LatencyMS)...)
+		default:
+			logger.Info("tool registered (no health check)", attrs...)
+		}
+	}
+	return results
+}
+
+// checkRegistry probes every executor of one registry without logging.
+func checkRegistry(ctx context.Context, env string, reg *Registry) []domain.ToolHealth {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
+	results := make([]domain.ToolHealth, 0, len(reg.executors))
 	for _, exec := range reg.executors {
+		r := domain.ToolHealth{Environment: env, Tool: "unknown", CheckedAt: time.Now().UTC()}
+		if t, ok := exec.(Targeter); ok {
+			r.Target = t.Target()
+		}
+		if n, ok := exec.(Namer); ok && n.Name() != "" {
+			r.Tool = n.Name()
+		}
+
 		tools, err := exec.ListTools(ctx)
 		if err != nil {
-			logger.Warn("tool executor: cannot list tools", "error", err)
+			r.Status = domain.ToolHealthFailed
+			r.Error = "cannot list tools: " + err.Error()
+			results = append(results, r)
 			continue
 		}
-
-		name := "unknown"
-		if len(tools) > 0 {
-			name = tools[0].Name
-			for i, c := range name {
-				if c == '_' {
-					name = name[:i]
-					break
-				}
-			}
+		r.ToolsCount = len(tools)
+		if n, ok := exec.(Namer); ok && n.Name() != "" {
+			r.Tool = n.Name()
+		} else if len(tools) > 0 {
+			r.Tool = reg.DisplayName(toolPrefix(tools[0].Name))
 		}
 
-		if hc, ok := exec.(HealthChecker); ok {
-			if err := hc.HealthCheck(ctx); err != nil {
-				logger.Error("tool health check FAILED",
-					"tool", name,
-					"tools_count", len(tools),
-					"error", err,
-				)
-			} else {
-				logger.Info("tool health check OK",
-					"tool", name,
-					"tools_count", len(tools),
-				)
-			}
+		hc, ok := exec.(HealthChecker)
+		if !ok {
+			r.Status = domain.ToolHealthUnchecked
+			results = append(results, r)
+			continue
+		}
+		start := time.Now()
+		err = hc.HealthCheck(ctx)
+		r.LatencyMS = time.Since(start).Milliseconds()
+		if err != nil {
+			r.Status = domain.ToolHealthFailed
+			r.Error = err.Error()
 		} else {
-			logger.Info("tool registered (no health check)",
-				"tool", name,
-				"tools_count", len(tools),
-			)
+			r.Status = domain.ToolHealthOK
 		}
+		results = append(results, r)
 	}
+	return results
+}
+
+// toolPrefix returns the executor category from a tool name ("k8s_get_pods" → "k8s").
+func toolPrefix(name string) string {
+	if i := strings.IndexByte(name, '_'); i > 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// HealthCheck for KubernetesExecutor — asks the API server for its version.
+func (k *KubernetesExecutor) HealthCheck(ctx context.Context) error {
+	if _, err := k.clientset.Discovery().ServerVersion(); err != nil {
+		return fmt.Errorf("api server: %w", err)
+	}
+	return nil
 }
 
 // HealthCheck for PrometheusExecutor — queries "up" metric.
@@ -101,9 +151,17 @@ func (l *LokiExecutor) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-// HealthCheck for MCPClient — already connected if tools are cached.
-func (c *MCPClient) HealthCheck(_ context.Context) error {
-	if len(c.tools) == 0 {
+// HealthCheck for MCPClient — reconnects if no tools were discovered yet.
+func (c *MCPClient) HealthCheck(ctx context.Context) error {
+	tools, _ := c.ListTools(ctx)
+	if len(tools) > 0 {
+		return nil
+	}
+	if err := c.Connect(ctx); err != nil {
+		return err
+	}
+	tools, _ = c.ListTools(ctx)
+	if len(tools) == 0 {
 		return fmt.Errorf("no tools discovered")
 	}
 	return nil

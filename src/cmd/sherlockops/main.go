@@ -59,17 +59,17 @@ func main() {
 	envRegistry.SetRegistry("default", defaultRegistry)
 	logger.Info("registered default tool registry")
 
-	// Health check default tools.
-	logger.Info("running tool health checks...")
-	tooling.CheckHealth(ctx, defaultRegistry, logger)
-
 	// Per-environment registries.
 	for envName, envCfg := range cfg.Environments {
 		reg := registerTools(ctx, envCfg.Tools, envCfg.MCP, logger)
 		envRegistry.SetRegistry(envName, reg)
 		logger.Info("registered environment", "name", envName)
-		tooling.CheckHealth(ctx, reg, logger)
 	}
+
+	logger.Info("running tool health checks...")
+	healthMonitor := tooling.NewHealthMonitor(envRegistry, cfg.Health.ToolCheckIntervalDuration(), logger)
+	healthMonitor.CheckNow(ctx)
+	go healthMonitor.Run(ctx)
 
 	// 3. LLM provider.
 	llmProvider, err := llm.NewProvider(
@@ -192,12 +192,11 @@ func main() {
 	pipe := pipeline.New(sqliteCache, rateLimitedAnalyzer, messengers, logger)
 	pipe.SetMode(cfg.Pipeline.Mode)
 	pipe.SetPendingStore(sqliteCache)
+	pipe.SetEventRecorder(sqliteCache)
 	workerPool := pipeline.NewWorkerPool(pipe, cfg.Pipeline.Workers, cfg.Pipeline.QueueSize, logger)
 	workerPool.Start(ctx)
 	logger.Info("pipeline configured", "mode", cfg.Pipeline.Mode)
-	if cfg.Pipeline.Mode == config.PipelineModeManual {
-		startPendingJanitor(ctx, sqliteCache, 30*24*time.Hour, logger)
-	}
+	startPendingJanitor(ctx, sqliteCache, 30*24*time.Hour, cfg.Stats.RetentionDuration(), logger)
 
 	// 7. Receivers.
 	receivers := []domain.Receiver{
@@ -241,6 +240,8 @@ func main() {
 	// 9a. Web UI dashboard.
 	dashboard := webui.New(sqliteCache, logger)
 	dashboard.SetPendingLister(pendingListerAdapter{c: sqliteCache})
+	dashboard.SetStatsProvider(sqliteCache)
+	dashboard.SetHealthSource(healthMonitor)
 	dashboard.RegisterRoutes(mux)
 
 	// 10. Middleware chain: Recovery -> RequestID -> router.
@@ -478,11 +479,12 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 			logger,
 		)
 		if err := client.Connect(ctx); err != nil {
-			logger.Error("failed to connect MCP client", "name", mcpClient.Name, "error", err)
-			os.Exit(1)
+			logger.Error("MCP client unavailable, will retry on health checks",
+				"name", mcpClient.Name, "url", mcpClient.URL, "error", err)
+		} else {
+			logger.Info("registered MCP client", "name", mcpClient.Name)
 		}
 		registry.Register(client)
-		logger.Info("registered MCP client", "name", mcpClient.Name)
 	}
 
 	return registry
@@ -521,9 +523,9 @@ func (a pendingListerAdapter) ListPending(ctx context.Context, limit int) ([]web
 	return out, nil
 }
 
-// startPendingJanitor periodically deletes pending_alerts entries older than
-// maxAge so the table stays bounded over time.
-func startPendingJanitor(ctx context.Context, c *cache.SQLiteCache, maxAge time.Duration, logger *slog.Logger) {
+// startPendingJanitor hourly deletes pending_alerts older than maxAge and
+// alert_events older than eventRetention.
+func startPendingJanitor(ctx context.Context, c *cache.SQLiteCache, maxAge, eventRetention time.Duration, logger *slog.Logger) {
 	if maxAge <= 0 {
 		maxAge = 30 * 24 * time.Hour
 	}
@@ -542,6 +544,14 @@ func startPendingJanitor(ctx context.Context, c *cache.SQLiteCache, maxAge time.
 					logger.Warn("pending janitor failed", "error", err)
 				} else if n > 0 {
 					logger.Info("pending janitor removed entries", "count", n, "older_than", maxAge.String())
+				}
+				cleanupCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+				n, err = c.CleanupEvents(cleanupCtx, now.Add(-eventRetention))
+				cancel()
+				if err != nil {
+					logger.Warn("alert events janitor failed", "error", err)
+				} else if n > 0 {
+					logger.Info("alert events janitor removed entries", "count", n, "older_than", eventRetention.String())
 				}
 			}
 		}

@@ -325,3 +325,6 @@ func (l *LokiExecutor) doGet(ctx context.Context, u string) ([]byte, error) {
 	}
 	return body, nil
 }
+
+// Target returns the Loki endpoint URL.
+func (l *LokiExecutor) Target() string { return l.url }

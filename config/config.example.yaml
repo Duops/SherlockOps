@@ -91,6 +91,14 @@ cache:
   path: "/data/cache.db"
   min_length: 200       # Don't cache short responses (likely errors)
 
+# ─── Tool health monitoring ───────────────────────────────────
+health:
+  tool_check_interval: "1m"   # how often every tool of every environment is probed (Tools page + logs)
+
+# ─── Alert volume statistics ──────────────────────────────────
+stats:
+  retention: "2160h"          # keep per-notification events for 90 days (Stats page)
+
 # ─── Pipeline ─────────────────────────────────────────────────
 pipeline:
   # mode controls how incoming alerts are processed:

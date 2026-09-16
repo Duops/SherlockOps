@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SherlockOps · Tools</title>
+    <link rel="stylesheet" href="/ui/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SherlockOps</h1>
+            {{template "nav" .}}
+            <div class="health-indicator">
+                <span id="health-dot" class="health-dot"></span>
+                <span id="health-text">Checking...</span>
+                <span class="refresh-info">Auto-refresh: 30s</span>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="label">Tools</div>
+                <div class="value" id="tools-total">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Healthy</div>
+                <div class="value ok" id="tools-ok">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Failed</div>
+                <div class="value failed" id="tools-failed">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Environments</div>
+                <div class="value" id="tools-envs">-</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <select id="health-env">
+                <option value="">All Environments</option>
+            </select>
+            <select id="health-status">
+                <option value="">All Statuses</option>
+                <option value="ok">Healthy</option>
+                <option value="failed">Failed</option>
+                <option value="unchecked">No check</option>
+            </select>
+        </div>
+
+        <table class="alert-table">
+            <thead>
+                <tr>
+                    <th>Environment</th>
+                    <th>Tool</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                    <th>Latency</th>
+                    <th>Tools</th>
+                    <th>Checked</th>
+                    <th>Error</th>
+                </tr>
+            </thead>
+            <tbody id="health-body">
+                <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script src="/ui/static/common.js"></script>
+    <script src="/ui/static/health.js"></script>
+</body>
+</html>

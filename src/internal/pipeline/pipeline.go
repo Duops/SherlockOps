@@ -21,6 +21,7 @@ type Pipeline struct {
 
 	// manual-mode dependencies (optional; nil in auto mode)
 	pending domain.PendingStore
+	events  domain.EventRecorder
 	mode    string
 }
 
@@ -43,6 +44,11 @@ func (p *Pipeline) SetMode(mode string) {
 		mode = "auto"
 	}
 	p.mode = mode
+}
+
+// SetEventRecorder wires per-notification volume statistics.
+func (p *Pipeline) SetEventRecorder(r domain.EventRecorder) {
+	p.events = r
 }
 
 // SetPendingStore wires the store used to persist raw alerts in manual mode.
@@ -85,6 +91,13 @@ func (p *Pipeline) Process(ctx context.Context, alert *domain.Alert) error {
 
 	log := p.alertLogger(alert)
 	log.Info("processing alert", "status", alert.Status)
+
+	isWebhook := alert.ReplyTarget == nil || alert.ReplyTarget.ThreadID == ""
+	if p.events != nil && isWebhook && !isSyntheticMention(alert) {
+		if err := p.events.RecordEvent(ctx, alert); err != nil {
+			log.Warn("failed to record alert event", "error", err)
+		}
+	}
 
 	// Bot listener mode: alert already has a ReplyTarget, use single-phase flow.
 	// (This includes manual-mode "@bot analyze" mentions resolved against pending store.)

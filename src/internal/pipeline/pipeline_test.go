@@ -617,3 +617,49 @@ func TestProcess_TwoPhase_NoPendingSaveWhenStoreNil(t *testing.T) {
 		t.Errorf("analyzer should still be called; got %d", analyzer.called)
 	}
 }
+
+type mockEventRecorder struct {
+	events []*domain.Alert
+	err    error
+}
+
+func (m *mockEventRecorder) RecordEvent(_ context.Context, a *domain.Alert) error {
+	m.events = append(m.events, a)
+	return m.err
+}
+
+func TestProcess_RecordsEventsForWebhookAlertsOnly(t *testing.T) {
+	cache := newMockCache()
+	analyzer := &mockAnalyzer{result: &domain.AnalysisResult{Text: "analysis result"}}
+	messenger := &mockMessenger{name: "slack"}
+	rec := &mockEventRecorder{err: errors.New("disk full")}
+
+	p := New(cache, analyzer, []domain.Messenger{messenger}, testLogger())
+	p.SetEventRecorder(rec)
+
+	firing := baseAlert()
+	firing.Environment = "prod"
+	if err := p.Process(context.Background(), firing); err != nil {
+		t.Fatalf("Process firing: %v", err)
+	}
+	resolved := baseAlert()
+	resolved.Status = domain.StatusResolved
+	if err := p.Process(context.Background(), resolved); err != nil {
+		t.Fatalf("Process resolved: %v", err)
+	}
+	// Bot mention in a thread: not a notification, must not be recorded.
+	mention := baseAlert()
+	mention.Name = "thread-mention"
+	mention.ReplyTarget = &domain.ReplyTarget{Messenger: "slack", Channel: "C1", ThreadID: "t1"}
+	_ = p.Process(context.Background(), mention)
+
+	if len(rec.events) != 2 {
+		t.Fatalf("recorded events = %d, want 2", len(rec.events))
+	}
+	if rec.events[0].Environment != "prod" || rec.events[0].Status != domain.StatusFiring {
+		t.Errorf("first event = %+v", rec.events[0])
+	}
+	if rec.events[1].Status != domain.StatusResolved {
+		t.Errorf("second event status = %q, want resolved", rec.events[1].Status)
+	}
+}
