@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SherlockOps · Stats</title>
+    <link rel="stylesheet" href="/ui/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SherlockOps</h1>
+            {{template "nav" .}}
+            <div class="health-indicator">
+                <span id="health-dot" class="health-dot"></span>
+                <span id="health-text">Checking...</span>
+                <span class="refresh-info">Auto-refresh: 60s</span>
+            </div>
+        </header>
+
+        <div class="controls">
+            <select id="stats-days">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+            <select id="stats-env">
+                <option value="">All Environments</option>
+            </select>
+        </div>
+
+        <div class="stats-grid big-grid">
+            <div class="stat-card big-card">
+                <div class="value" id="big-total">-</div>
+                <div class="desc" id="big-total-desc">notifications</div>
+            </div>
+            <div class="stat-card big-card">
+                <div class="value" id="big-top3">-</div>
+                <div class="desc" id="big-top3-desc">of volume from the top 3 alerts</div>
+            </div>
+            <div class="stat-card big-card">
+                <div class="value" id="big-resolved">-</div>
+                <div class="desc" id="big-resolved-desc">of notifications are resolved</div>
+            </div>
+            <div class="stat-card big-card">
+                <div class="value" id="big-unique">-</div>
+                <div class="desc" id="big-unique-desc">unique alerts</div>
+            </div>
+        </div>
+
+        <div class="two-col">
+            <section>
+                <h2 class="section-title">Top alerts by volume</h2>
+                <table class="alert-table" id="top-alerts">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Alert</th>
+                            <th>Environments</th>
+                            <th>Count</th>
+                            <th>Share</th>
+                            <th>Resolved</th>
+                        </tr>
+                    </thead>
+                    <tbody id="top-alerts-body">
+                        <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </section>
+            <section>
+                <h2 class="section-title">By environment</h2>
+                <table class="alert-table" id="by-env">
+                    <thead>
+                        <tr>
+                            <th>Environment</th>
+                            <th>Count</th>
+                            <th>Per day</th>
+                            <th>Share</th>
+                            <th>Alerts</th>
+                            <th>Top alert</th>
+                        </tr>
+                    </thead>
+                    <tbody id="by-env-body">
+                        <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </section>
+        </div>
+    </div>
+
+    <script src="/ui/static/common.js"></script>
+    <script src="/ui/static/stats.js"></script>
+</body>
+</html>

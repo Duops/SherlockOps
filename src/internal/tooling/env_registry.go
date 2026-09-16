@@ -46,3 +46,12 @@ func (r *EnvRegistry) GetRegistry(env string) *Registry {
 	// Return an empty registry so callers never get nil.
 	return NewRegistry(r.logger)
 }
+
+// Registries returns a copy of the environment → registry map.
+func (r *EnvRegistry) Registries() map[string]*Registry {
+	out := make(map[string]*Registry, len(r.registries))
+	for k, v := range r.registries {
+		out[k] = v
+	}
+	return out
+}

@@ -20,8 +20,12 @@ import (
 // KubernetesExecutor provides Kubernetes query tools.
 type KubernetesExecutor struct {
 	clientset *kubernetes.Clientset
+	target    string
 	logger    *slog.Logger
 }
+
+// Target returns the kubeconfig path (and context) or "in-cluster".
+func (k *KubernetesExecutor) Target() string { return k.target }
 
 // NewKubernetesExecutor creates a new Kubernetes tool executor.
 // kubeconfig is the path to a kubeconfig file; if empty, in-cluster config is used.
@@ -29,6 +33,14 @@ type KubernetesExecutor struct {
 func NewKubernetesExecutor(kubeconfig, kubeContext string, logger *slog.Logger) (*KubernetesExecutor, error) {
 	var config *rest.Config
 	var err error
+
+	target := "in-cluster"
+	if kubeconfig != "" {
+		target = kubeconfig
+		if kubeContext != "" {
+			target += " (" + kubeContext + ")"
+		}
+	}
 
 	if kubeconfig != "" {
 		loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
@@ -56,6 +68,7 @@ func NewKubernetesExecutor(kubeconfig, kubeContext string, logger *slog.Logger) 
 
 	return &KubernetesExecutor{
 		clientset: clientset,
+		target:    target,
 		logger:    logger,
 	}, nil
 }

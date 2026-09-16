@@ -32,6 +32,8 @@ type PendingItem struct {
 type Handler struct {
 	cache   domain.Cache
 	pending PendingLister
+	health  HealthSource
+	stats   domain.StatsProvider
 	logger  *slog.Logger
 	tmpl    *template.Template
 }
@@ -54,6 +56,10 @@ func (h *Handler) SetPendingLister(p PendingLister) {
 // RegisterRoutes adds the dashboard routes to the given ServeMux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui", h.dashboard)
+	mux.HandleFunc("GET /ui/stats", h.statsPage)
+	mux.HandleFunc("GET /ui/health", h.healthPage)
+	mux.HandleFunc("GET /ui/api/health/tools", h.apiToolHealth)
+	mux.HandleFunc("GET /ui/api/alert-stats", h.apiAlertStats)
 	mux.HandleFunc("GET /ui/api/alerts", h.apiAlerts)
 	mux.HandleFunc("GET /ui/api/alerts/{fingerprint}", h.apiAlert)
 	mux.HandleFunc("GET /ui/api/stats", h.apiStats)
@@ -61,12 +67,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /ui/static/", http.StripPrefix("/ui/static/", http.FileServerFS(sub)))
 }
 
-func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "dashboard.html", nil); err != nil {
-		h.logger.Error("render dashboard", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-	}
+func (h *Handler) dashboard(w http.ResponseWriter, _ *http.Request) {
+	h.renderPage(w, "dashboard.html", "alerts")
 }
 
 func (h *Handler) apiAlerts(w http.ResponseWriter, r *http.Request) {

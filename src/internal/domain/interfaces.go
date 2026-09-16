@@ -147,3 +147,13 @@ type Messenger interface {
 	// Stop gracefully shuts down the messenger.
 	Stop(ctx context.Context) error
 }
+
+// EventRecorder persists one row per received alert notification.
+type EventRecorder interface {
+	RecordEvent(ctx context.Context, alert *Alert) error
+}
+
+// StatsProvider computes alert volume statistics over a time window (env "" = all).
+type StatsProvider interface {
+	AlertStats(ctx context.Context, since time.Time, env string) (*AlertStats, error)
+}

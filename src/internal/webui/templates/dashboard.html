@@ -10,6 +10,7 @@
     <div class="container">
         <header>
             <h1>SherlockOps</h1>
+            {{template "nav" .}}
             <div class="health-indicator">
                 <span id="health-dot" class="health-dot"></span>
                 <span id="health-text">Checking...</span>
@@ -45,6 +46,9 @@
             <select id="filter-source">
                 <option value="">All Sources</option>
             </select>
+            <select id="filter-env">
+                <option value="">All Environments</option>
+            </select>
             <select id="filter-severity">
                 <option value="">All Severities</option>
                 <option value="critical">Critical</option>
@@ -78,6 +82,7 @@
         </table>
     </div>
 
+    <script src="/ui/static/common.js"></script>
     <script src="/ui/static/app.js"></script>
 </body>
 </html>

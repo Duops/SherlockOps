@@ -20,7 +20,37 @@ type Config struct {
 	MCP          MCPConfig                   `yaml:"mcp"`
 	Pipeline     PipelineConfig              `yaml:"pipeline"`
 	Runbooks     RunbookConfig               `yaml:"runbooks"`
+	Health       HealthConfig                `yaml:"health"`
+	Stats        StatsConfig                 `yaml:"stats"`
 	Environments map[string]EnvironmentConfig `yaml:"environments"`
+}
+
+// HealthConfig holds tool connectivity monitoring settings.
+type HealthConfig struct {
+	ToolCheckInterval string `yaml:"tool_check_interval"`
+}
+
+// ToolCheckIntervalDuration parses the interval; invalid or empty falls back to 1m.
+func (h HealthConfig) ToolCheckIntervalDuration() time.Duration {
+	d, err := time.ParseDuration(h.ToolCheckInterval)
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	return d
+}
+
+// StatsConfig holds alert volume statistics settings.
+type StatsConfig struct {
+	Retention string `yaml:"retention"`
+}
+
+// RetentionDuration parses the retention; invalid or empty falls back to 90 days.
+func (s StatsConfig) RetentionDuration() time.Duration {
+	d, err := time.ParseDuration(s.Retention)
+	if err != nil || d <= 0 {
+		return 90 * 24 * time.Hour
+	}
+	return d
 }
 
 // EnvironmentConfig holds per-environment overrides for tools, MCP, and LLM settings.
@@ -349,6 +379,9 @@ func applyDefaults(cfg *Config) {
 	cfg.Pipeline.MaxConcurrentLLM = 3
 
 	cfg.Runbooks.Dir = "/data/runbooks"
+
+	cfg.Health.ToolCheckInterval = "1m"
+	cfg.Stats.Retention = "2160h"
 }
 
 // inheritDefaultMCPClients copies top-level mcp.clients into environments without their own.
@@ -440,6 +473,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Cache.MinLength < 0 {
 		errs = append(errs, "cache.min_length must be non-negative")
+	}
+	if _, err := time.ParseDuration(c.Health.ToolCheckInterval); err != nil {
+		errs = append(errs, fmt.Sprintf("health.tool_check_interval is not a valid duration: %v", err))
+	}
+	if _, err := time.ParseDuration(c.Stats.Retention); err != nil {
+		errs = append(errs, fmt.Sprintf("stats.retention is not a valid duration: %v", err))
 	}
 
 	slackConfigured := c.Messengers.Slack.Enabled

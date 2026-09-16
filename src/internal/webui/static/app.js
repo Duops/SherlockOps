@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function () {
         alerts: [],
         expandedFingerprint: null,
         filterSource: '',
+        filterEnv: '',
         filterSeverity: '',
         filterStatus: '',
         searchName: '',
@@ -14,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var alertsBody = document.getElementById('alerts-body');
     var searchInput = document.getElementById('search-name');
     var filterSource = document.getElementById('filter-source');
+    var filterEnv = document.getElementById('filter-env');
     var filterSeverity = document.getElementById('filter-severity');
     var filterStatus = document.getElementById('filter-status');
     var healthDot = document.getElementById('health-dot');
@@ -63,6 +65,7 @@ document.addEventListener('DOMContentLoaded', function () {
         fetchJSON('/ui/api/alerts?limit=50').then(function (data) {
             state.alerts = data.alerts || [];
             populateSources();
+            populateEnvironments();
             renderAlerts();
         }).catch(function () {
             alertsBody.innerHTML = '<tr><td colspan="9" class="empty-state">Failed to load alerts</td></tr>';
@@ -85,8 +88,25 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    function populateEnvironments() {
+        var envs = {};
+        state.alerts.forEach(function (a) {
+            envs[a.environment || 'default'] = true;
+        });
+        var current = state.filterEnv || filterEnv.value;
+        filterEnv.innerHTML = '<option value="">All Environments</option>';
+        Object.keys(envs).sort().forEach(function (e) {
+            var opt = document.createElement('option');
+            opt.value = e;
+            opt.textContent = e;
+            if (e === current) opt.selected = true;
+            filterEnv.appendChild(opt);
+        });
+    }
+
     function matchesFilters(alert) {
         if (state.filterSource && (alert.source || '') !== state.filterSource) return false;
+        if (state.filterEnv && (alert.environment || 'default') !== state.filterEnv) return false;
         if (state.filterSeverity) {
             var sev = alert.severity || extractSeverity(alert);
             if (sev !== state.filterSeverity) return false;
@@ -198,7 +218,7 @@ document.addEventListener('DOMContentLoaded', function () {
             html += '<tr onclick="toggleAlert(\'' + escapeHtml(alert.alert_fingerprint) + '\')">';
             html += '<td>' + formatTime(alert.cached_at) + '</td>';
             html += '<td>' + escapeHtml(alert.source || '-') + '</td>';
-            html += '<td>' + escapeHtml(alert.environment || '-') + '</td>';
+            html += '<td>' + escapeHtml(alert.environment || 'default') + '</td>';
             html += '<td>' + escapeHtml(alert.alert_name || alert.alert_fingerprint) + '</td>';
             html += '<td><span class="severity-badge severity-' + severity + '">' + severity + '</span></td>';
             html += '<td><span class="status-badge status-' + status + '">' + status + '</span></td>';
@@ -233,6 +253,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     filterSource.addEventListener('change', function () {
         state.filterSource = this.value;
+        renderAlerts();
+    });
+
+    filterEnv.addEventListener('change', function () {
+        state.filterEnv = this.value;
         renderAlerts();
     });
 

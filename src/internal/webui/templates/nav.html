@@ -1,0 +1,5 @@
+{{define "nav"}}<nav class="nav">
+    <a href="/ui"{{if eq .Active "alerts"}} class="active"{{end}}>Alerts</a>
+    <a href="/ui/stats"{{if eq .Active "stats"}} class="active"{{end}}>Stats</a>
+    <a href="/ui/health"{{if eq .Active "health"}} class="active"{{end}}>Tools</a>
+</nav>{{end}}

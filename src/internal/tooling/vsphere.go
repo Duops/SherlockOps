@@ -635,3 +635,6 @@ func toStringSlice(v interface{}) []string {
 		return nil
 	}
 }
+
+// Target returns the vCenter URL.
+func (v *VSphereExecutor) Target() string { return v.url }
