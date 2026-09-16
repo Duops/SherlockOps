@@ -408,3 +408,11 @@ func TestCompactToolHistory(t *testing.T) {
 		t.Errorf("keep=0 must not alter content")
 	}
 }
+
+func TestBuildResultCarriesEnvironment(t *testing.T) {
+	alert := &domain.Alert{Fingerprint: "fp", Name: "TestAlert", Environment: "easysend-prod"}
+	res := buildResult(alert, "text", nil, nil)
+	if res.Environment != "easysend-prod" {
+		t.Errorf("environment = %q, want %q", res.Environment, "easysend-prod")
+	}
+}

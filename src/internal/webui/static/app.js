@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', function () {
             populateSources();
             renderAlerts();
         }).catch(function () {
-            alertsBody.innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load alerts</td></tr>';
+            alertsBody.innerHTML = '<tr><td colspan="9" class="empty-state">Failed to load alerts</td></tr>';
         });
     }
 
@@ -102,6 +102,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 alert.alert_fingerprint || '',
                 alert.alert_name || '',
                 alert.source || '',
+                alert.environment || '',
                 alert.text || ''
             ].join(' ').toLowerCase();
             if (haystack.indexOf(term) === -1) return false;
@@ -180,7 +181,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         if (filtered.length === 0) {
-            alertsBody.innerHTML = '<tr><td colspan="8" class="empty-state">No alerts found</td></tr>';
+            alertsBody.innerHTML = '<tr><td colspan="9" class="empty-state">No alerts found</td></tr>';
             return;
         }
 
@@ -197,6 +198,7 @@ document.addEventListener('DOMContentLoaded', function () {
             html += '<tr onclick="toggleAlert(\'' + escapeHtml(alert.alert_fingerprint) + '\')">';
             html += '<td>' + formatTime(alert.cached_at) + '</td>';
             html += '<td>' + escapeHtml(alert.source || '-') + '</td>';
+            html += '<td>' + escapeHtml(alert.environment || '-') + '</td>';
             html += '<td>' + escapeHtml(alert.alert_name || alert.alert_fingerprint) + '</td>';
             html += '<td><span class="severity-badge severity-' + severity + '">' + severity + '</span></td>';
             html += '<td><span class="status-badge status-' + status + '">' + status + '</span></td>';
@@ -206,7 +208,7 @@ document.addEventListener('DOMContentLoaded', function () {
             html += '</tr>';
 
             if (expanded) {
-                html += '<tr class="analysis-row"><td colspan="8">';
+                html += '<tr class="analysis-row"><td colspan="9">';
                 html += '<div class="analysis-content">' + escapeHtml(alert.text) + '</div>';
                 html += '</td></tr>';
             }

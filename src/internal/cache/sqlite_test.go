@@ -600,3 +600,36 @@ func TestPendingStore_ListOrderingAndLimit(t *testing.T) {
 		t.Errorf("limit=0 should default and return all 3; got %d err=%v", len(got), err)
 	}
 }
+
+func TestEnvironmentRoundTrip(t *testing.T) {
+	c, err := New(tempDB(t), time.Hour, 5)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+	if err := c.Set(ctx, &domain.AnalysisResult{
+		AlertFingerprint: "fp-env",
+		Text:             "This is the analysis text.",
+		Environment:      "pay-prod",
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := c.Get(ctx, "fp-env")
+	if err != nil || got == nil {
+		t.Fatalf("Get: %v, %v", got, err)
+	}
+	if got.Environment != "pay-prod" {
+		t.Errorf("Get environment = %q, want %q", got.Environment, "pay-prod")
+	}
+
+	list, _, err := c.List(ctx, 10, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List: %v, %v", list, err)
+	}
+	if list[0].Environment != "pay-prod" {
+		t.Errorf("List environment = %q, want %q", list[0].Environment, "pay-prod")
+	}
+}

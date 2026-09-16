@@ -490,3 +490,48 @@ mcp:
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+func TestEnvironmentsInheritDefaultMCPClients(t *testing.T) {
+	content := `
+mcp:
+  clients:
+    - name: "k8s-mcp"
+      url: "https://k8s-mcp.example.com/mcp"
+      auth: "bearer"
+      token: "secret"
+environments:
+  prod:
+    tools:
+      loki:
+        enabled: true
+        url: "https://loki.prod.example.com"
+  dev:
+    mcp:
+      clients:
+        - name: "dev-only"
+          url: "https://dev-mcp.example.com/mcp"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load from file: %v", err)
+	}
+
+	prod := cfg.Environments["prod"]
+	if len(prod.MCP.Clients) != 1 || prod.MCP.Clients[0].Name != "k8s-mcp" {
+		t.Errorf("prod should inherit default mcp clients, got %+v", prod.MCP.Clients)
+	}
+	if prod.MCP.Clients[0].Token != "secret" {
+		t.Errorf("inherited client should keep token, got %q", prod.MCP.Clients[0].Token)
+	}
+
+	dev := cfg.Environments["dev"]
+	if len(dev.MCP.Clients) != 1 || dev.MCP.Clients[0].Name != "dev-only" {
+		t.Errorf("dev should keep its own mcp clients, got %+v", dev.MCP.Clients)
+	}
+}

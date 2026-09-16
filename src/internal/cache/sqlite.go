@@ -66,7 +66,8 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 		iterations        INTEGER DEFAULT 0,
 		input_token_cost  REAL DEFAULT 0,
 		output_token_cost REAL DEFAULT 0,
-		tools_trace       TEXT DEFAULT ''
+		tools_trace       TEXT DEFAULT '',
+		environment       TEXT DEFAULT ''
 	)`
 	if _, err := db.Exec(createSQL); err != nil {
 		db.Close()
@@ -88,6 +89,7 @@ func New(dbPath string, ttl time.Duration, minLength int) (*SQLiteCache, error) 
 		"ALTER TABLE alerts_cache ADD COLUMN input_token_cost REAL DEFAULT 0",
 		"ALTER TABLE alerts_cache ADD COLUMN output_token_cost REAL DEFAULT 0",
 		"ALTER TABLE alerts_cache ADD COLUMN tools_trace TEXT DEFAULT ''",
+		"ALTER TABLE alerts_cache ADD COLUMN environment TEXT DEFAULT ''",
 	} {
 		_, _ = db.Exec(col) // ignore "duplicate column name" errors
 	}
@@ -119,7 +121,7 @@ func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.Anal
 		`SELECT analysis_text, tools_used, created_at, resolved_at,
 		        source, severity, alert_name,
 		        model, input_tokens, output_tokens, total_tokens, iterations,
-		        input_token_cost, output_token_cost, tools_trace
+		        input_token_cost, output_token_cost, tools_trace, environment
 		 FROM alerts_cache WHERE fingerprint = ?`,
 		fingerprint,
 	)
@@ -140,11 +142,12 @@ func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.Anal
 		inCost       sql.NullFloat64
 		outCost      sql.NullFloat64
 		traceRaw     sql.NullString
+		environment  sql.NullString
 	)
 	if err := row.Scan(&text, &toolsRaw, &createdRaw, &resolvedRaw,
 		&source, &severity, &alertName,
 		&model, &inputTokens, &outputTokens, &totalTokens, &iterations,
-		&inCost, &outCost, &traceRaw); err != nil {
+		&inCost, &outCost, &traceRaw, &environment); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -165,6 +168,7 @@ func (c *SQLiteCache) Get(ctx context.Context, fingerprint string) (*domain.Anal
 		Text:             text,
 		CachedAt:         createdAt,
 		Source:           source.String,
+		Environment:      environment.String,
 		Severity:         severity.String,
 		AlertName:        alertName.String,
 		Model:            model.String,
@@ -217,9 +221,9 @@ func (c *SQLiteCache) Set(ctx context.Context, result *domain.AnalysisResult) er
 		   fingerprint, analysis_text, tools_used, created_at, resolved_at,
 		   source, severity, alert_name,
 		   model, input_tokens, output_tokens, total_tokens, iterations,
-		   input_token_cost, output_token_cost, tools_trace
+		   input_token_cost, output_token_cost, tools_trace, environment
 		 )
-		 VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(fingerprint) DO UPDATE SET
 		   analysis_text     = excluded.analysis_text,
 		   tools_used        = excluded.tools_used,
@@ -234,11 +238,12 @@ func (c *SQLiteCache) Set(ctx context.Context, result *domain.AnalysisResult) er
 		   iterations        = excluded.iterations,
 		   input_token_cost  = excluded.input_token_cost,
 		   output_token_cost = excluded.output_token_cost,
-		   tools_trace       = excluded.tools_trace`,
+		   tools_trace       = excluded.tools_trace,
+		   environment       = excluded.environment`,
 		result.AlertFingerprint, result.Text, toolsStr, now,
 		result.Source, result.Severity, result.AlertName,
 		result.Model, result.InputTokens, result.OutputTokens, result.TotalTokens, result.Iterations,
-		result.InputTokenCost, result.OutputTokenCost, traceJSON,
+		result.InputTokenCost, result.OutputTokenCost, traceJSON, result.Environment,
 	)
 	if err != nil {
 		return fmt.Errorf("cache: set: %w", err)
@@ -278,7 +283,7 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 		`SELECT fingerprint, analysis_text, tools_used, created_at, resolved_at,
 		        source, severity, alert_name,
 		        model, input_tokens, output_tokens, total_tokens, iterations,
-		        input_token_cost, output_token_cost, tools_trace
+		        input_token_cost, output_token_cost, tools_trace, environment
 		 FROM alerts_cache ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		limit, offset,
 	)
@@ -306,11 +311,12 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 			inCost       sql.NullFloat64
 			outCost      sql.NullFloat64
 			traceRaw     sql.NullString
+			environment  sql.NullString
 		)
 		if err := rows.Scan(&fingerprint, &text, &toolsRaw, &createdRaw, &resolvedRaw,
 			&source, &severity, &alertName,
 			&model, &inputTokens, &outputTokens, &totalTokens, &iterations,
-			&inCost, &outCost, &traceRaw); err != nil {
+			&inCost, &outCost, &traceRaw, &environment); err != nil {
 			return nil, 0, fmt.Errorf("cache: list scan: %w", err)
 		}
 
@@ -318,6 +324,7 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 			AlertFingerprint: fingerprint,
 			Text:             text,
 			Source:           source.String,
+			Environment:      environment.String,
 			Severity:         severity.String,
 			AlertName:        alertName.String,
 			Model:            model.String,

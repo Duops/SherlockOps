@@ -178,6 +178,7 @@ func pendingToStub(it PendingItem) *domain.AnalysisResult {
 		AlertFingerprint: a.Fingerprint,
 		AlertName:        a.Name,
 		Source:           a.Source,
+		Environment:      a.Environment,
 		Severity:         string(a.Severity),
 		Text:             text,
 		ToolsUsed:        nil,
