@@ -220,8 +220,10 @@ func main() {
 	startPendingJanitor(ctx, sqliteCache, 30*24*time.Hour, cfg.Stats.RetentionDuration(), logger)
 
 	// 7. Receivers.
+	amReceiver := receiver.NewAlertmanagerReceiver()
+	amReceiver.SetSilenceLabels(cfg.Webhooks.SilenceLabels)
 	receivers := []domain.Receiver{
-		receiver.NewAlertmanagerReceiver(),
+		amReceiver,
 		receiver.NewGrafanaReceiver(),
 		receiver.NewZabbixReceiver(),
 		receiver.NewDatadogReceiver(),

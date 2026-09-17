@@ -133,6 +133,10 @@ pipeline:
 # ─── Webhooks ─────────────────────────────────────────────────
 webhooks:
   path_prefix: "/webhook"
+  # Labels kept in the Slack "Silence" link (alertname is always included).
+  # Add the labels that identify objects in your alerts (container, host, device,
+  # provider_name, ...); ephemeral ones like pod/instance are best left out.
+  silence_labels: [alertname, namespace, cluster, job, service, severity]
   # Endpoints: POST /webhook/alertmanager, /webhook/grafana,
   #            /webhook/zabbix, /webhook/datadog, /webhook/elk,
   #            /webhook/loki, /webhook/generic

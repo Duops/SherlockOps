@@ -265,7 +265,8 @@ func (c CacheConfig) TTLDuration() time.Duration {
 
 // WebhooksConfig holds webhook settings.
 type WebhooksConfig struct {
-	PathPrefix string `yaml:"path_prefix"`
+	PathPrefix    string   `yaml:"path_prefix"`
+	SilenceLabels []string `yaml:"silence_labels"`
 }
 
 // ToolsConfig holds external tool configurations.
@@ -461,6 +462,9 @@ func applyDefaults(cfg *Config) {
 	cfg.Cache.MinLength = 200
 
 	cfg.Webhooks.PathPrefix = "/webhook"
+	cfg.Webhooks.SilenceLabels = []string{
+		"alertname", "namespace", "cluster", "job", "service", "severity",
+	}
 
 	cfg.MCP.Bridge.Port = 8082
 
