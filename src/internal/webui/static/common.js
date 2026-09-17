@@ -136,7 +136,58 @@ window.SherlockUI = (function () {
     });
     document.addEventListener('DOMContentLoaded', function () { enhanceSelects(document); });
 
+    // renderMarkdown: escaped text → HTML for headings, bold, code, lists, paragraphs.
+    function renderMarkdown(text) {
+        var lines = escapeHtml(text || '').split('\n');
+        var html = '';
+        var list = null; // 'ul' | 'ol'
+        var para = [];
+
+        function inline(s) {
+            return s
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>');
+        }
+        function flushPara() {
+            if (para.length) {
+                html += '<p>' + inline(para.join(' ')) + '</p>';
+                para = [];
+            }
+        }
+        function closeList() {
+            if (list) {
+                html += '</' + list + '>';
+                list = null;
+            }
+        }
+
+        lines.forEach(function (raw) {
+            var line = raw.replace(/\s+$/, '');
+            var h = /^(#{1,4})\s+(.*)$/.exec(line);
+            var ul = /^\s*[-*•]\s+(.*)$/.exec(line);
+            var ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+            if (h) {
+                flushPara(); closeList();
+                var level = Math.min(h[1].length + 2, 5);
+                html += '<h' + level + '>' + inline(h[2]) + '</h' + level + '>';
+            } else if (ul || ol) {
+                flushPara();
+                var kind = ul ? 'ul' : 'ol';
+                if (list !== kind) { closeList(); list = kind; html += '<' + kind + '>'; }
+                html += '<li>' + inline((ul || ol)[1]) + '</li>';
+            } else if (line.trim() === '') {
+                flushPara(); closeList();
+            } else {
+                if (list) closeList();
+                para.push(line.trim());
+            }
+        });
+        flushPara(); closeList();
+        return html;
+    }
+
     return {
+        renderMarkdown: renderMarkdown,
         enhanceSelects: enhanceSelects,
         fetchJSON: fetchJSON,
         escapeHtml: escapeHtml,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,11 +20,13 @@ import (
 	"github.com/Duops/SherlockOps/internal/config"
 	"github.com/Duops/SherlockOps/internal/domain"
 	"github.com/Duops/SherlockOps/internal/health"
+	"github.com/Duops/SherlockOps/internal/httpclient"
 	"github.com/Duops/SherlockOps/internal/messenger"
 	"github.com/Duops/SherlockOps/internal/metrics"
 	"github.com/Duops/SherlockOps/internal/middleware"
 	"github.com/Duops/SherlockOps/internal/pipeline"
 	"github.com/Duops/SherlockOps/internal/receiver"
+	"github.com/Duops/SherlockOps/internal/review"
 	"github.com/Duops/SherlockOps/internal/runbook"
 	"github.com/Duops/SherlockOps/internal/version"
 	"github.com/Duops/SherlockOps/internal/webui"
@@ -55,13 +58,13 @@ func main() {
 	envRegistry := tooling.NewEnvRegistry(logger)
 
 	// Default registry (from top-level tools + mcp).
-	defaultRegistry := registerTools(ctx, cfg.Tools, cfg.MCP, logger)
+	defaultRegistry := registerTools(ctx, cfg.Tools, cfg.MCP, "", logger)
 	envRegistry.SetRegistry("default", defaultRegistry)
 	logger.Info("registered default tool registry")
 
 	// Per-environment registries.
 	for envName, envCfg := range cfg.Environments {
-		reg := registerTools(ctx, envCfg.Tools, envCfg.MCP, logger)
+		reg := registerTools(ctx, envCfg.Tools, envCfg.MCP, cfg.Tools.ProxyURL, logger)
 		envRegistry.SetRegistry(envName, reg)
 		logger.Info("registered environment", "name", envName)
 	}
@@ -72,12 +75,21 @@ func main() {
 	go healthMonitor.Run(ctx)
 
 	// 3. LLM provider.
+	llmClient, err := httpclient.New(120*time.Second, cfg.LLMProxy())
+	if err != nil {
+		logger.Error("invalid proxy", "error", err)
+		os.Exit(1)
+	}
+	if p := cfg.LLMProxy(); p != "" {
+		logger.Info("proxy enabled", "for", "llm", "proxy", redactURL(p))
+	}
 	llmProvider, err := llm.NewProvider(
 		cfg.LLM.Provider,
 		cfg.LLM.APIKey,
 		cfg.LLM.BaseURL,
 		cfg.LLM.Model,
 		cfg.LLM.MaxTokens,
+		llm.WithHTTPClient(llmClient),
 	)
 	if err != nil {
 		logger.Error("failed to create LLM provider", "error", err)
@@ -154,6 +166,9 @@ func main() {
 			cfg.Messengers.Slack.ListenChannels,
 			logger,
 		)
+		if c, err := httpclient.New(30*time.Second, cfg.MessengerProxy(cfg.Messengers.Slack.ProxyURL)); err == nil {
+			slackMsg.SetHTTPClient(c)
+		}
 		slackMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, slackMsg)
 		logger.Info("messenger enabled", "name", "slack")
@@ -167,6 +182,9 @@ func main() {
 			cfg.Messengers.Telegram.ParseMode,
 			logger,
 		)
+		if c, err := httpclient.New(60*time.Second, cfg.MessengerProxy(cfg.Messengers.Telegram.ProxyURL)); err == nil {
+			tgMsg.SetHTTPClient(c)
+		}
 		tgMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, tgMsg)
 		logger.Info("messenger enabled", "name", "telegram")
@@ -183,6 +201,9 @@ func main() {
 			cfg.Messengers.Teams.ListenPort,
 			logger,
 		)
+		if c, err := httpclient.New(30*time.Second, cfg.MessengerProxy(cfg.Messengers.Teams.ProxyURL)); err == nil {
+			teamsMsg.SetHTTPClient(c)
+		}
 		teamsMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, teamsMsg)
 		logger.Info("messenger enabled", "name", "teams")
@@ -237,11 +258,19 @@ func main() {
 	mux.Handle("/metrics", metrics.Handler())
 	mux.Handle(cfg.Webhooks.PathPrefix+"/", receiverRouter)
 
+	reviewer := review.New(llmProvider, sqliteCache, sqliteCache, cfg.LLM.Model, cfg.LLM.Language, logger)
+	reviewer.SetTokenCost(cfg.LLM.InputTokenCost, cfg.LLM.OutputTokenCost)
+	if interval := cfg.Stats.ReviewIntervalDuration(); interval > 0 {
+		go reviewer.RunLoop(ctx, interval)
+		logger.Info("alert review scheduled", "interval", interval.String())
+	}
+
 	// 9a. Web UI dashboard.
 	dashboard := webui.New(sqliteCache, logger)
 	dashboard.SetPendingLister(pendingListerAdapter{c: sqliteCache})
 	dashboard.SetStatsProvider(sqliteCache)
 	dashboard.SetHealthSource(healthMonitor)
+	dashboard.SetReviewSource(reviewer)
 	dashboard.RegisterRoutes(mux)
 
 	// 10. Middleware chain: Recovery -> RequestID -> router.
@@ -364,8 +393,20 @@ func main() {
 }
 
 // registerTools creates a Registry and populates it from the given ToolsConfig and MCPConfig.
-func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, logger *slog.Logger) *tooling.Registry {
+func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, inheritedProxy string, logger *slog.Logger) *tooling.Registry {
 	registry := tooling.NewRegistry(logger)
+	proxyFor := func(own string) string { return config.ToolProxy(own, toolsCfg.ProxyURL, inheritedProxy) }
+	clientFor := func(name, own string, timeout time.Duration) *http.Client {
+		c, err := httpclient.New(timeout, proxyFor(own))
+		if err != nil {
+			logger.Error("invalid tool proxy", "tool", name, "error", err)
+			os.Exit(1)
+		}
+		if p := proxyFor(own); p != "" {
+			logger.Info("proxy enabled", "for", name, "proxy", redactURL(p))
+		}
+		return c
+	}
 
 	if toolsCfg.Prometheus.Enabled {
 		prom := tooling.NewPrometheusExecutor(
@@ -374,6 +415,7 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 			toolsCfg.Prometheus.Password,
 			logger,
 		)
+		prom.SetHTTPClient(clientFor("prometheus", toolsCfg.Prometheus.ProxyURL, 30*time.Second))
 		registry.RegisterNamed(prom, "prometheus")
 		logger.Info("registered tool executor", "name", "prometheus")
 	}
@@ -384,6 +426,7 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 			url = url + "/select/" + toolsCfg.VictoriaMetrics.Tenant + "/prometheus"
 		}
 		vm := tooling.NewPrometheusExecutor(url, toolsCfg.VictoriaMetrics.Username, toolsCfg.VictoriaMetrics.Password, logger)
+		vm.SetHTTPClient(clientFor("victoriametrics", toolsCfg.VictoriaMetrics.ProxyURL, 30*time.Second))
 		registry.RegisterNamed(vm, "victoriametrics")
 		logger.Info("registered tool executor", "name", "victoriametrics")
 	}
@@ -395,14 +438,16 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 			toolsCfg.Loki.Password,
 			logger,
 		)
+		loki.SetHTTPClient(clientFor("loki", toolsCfg.Loki.ProxyURL, 30*time.Second))
 		registry.RegisterNamed(loki, "loki")
 		logger.Info("registered tool executor", "name", "loki")
 	}
 
 	if toolsCfg.Kubernetes.Enabled {
-		k8s, err := tooling.NewKubernetesExecutor(
+		k8s, err := tooling.NewKubernetesExecutorWithProxy(
 			toolsCfg.Kubernetes.Kubeconfig,
 			toolsCfg.Kubernetes.Context,
+			proxyFor(toolsCfg.Kubernetes.ProxyURL),
 			logger,
 		)
 		if err != nil {
@@ -415,6 +460,10 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 
 	if toolsCfg.VSphere.Enabled {
 		vs := tooling.NewVSphereExecutor(toolsCfg.VSphere.URL, toolsCfg.VSphere.Username, toolsCfg.VSphere.Password, toolsCfg.VSphere.Insecure, logger)
+		if err := vs.SetProxy(proxyFor(toolsCfg.VSphere.ProxyURL)); err != nil {
+			logger.Error("invalid tool proxy", "tool", "vsphere", "error", err)
+			os.Exit(1)
+		}
 		registry.RegisterNamed(vs, "vsphere")
 		logger.Info("registered tool executor", "name", "vsphere")
 	}
@@ -478,6 +527,7 @@ func registerTools(ctx context.Context, toolsCfg config.ToolsConfig, mcpCfg conf
 			mcpClient.Headers,
 			logger,
 		)
+		client.SetHTTPClient(clientFor(mcpClient.Name, mcpClient.ProxyURL, 60*time.Second))
 		if err := client.Connect(ctx); err != nil {
 			logger.Error("MCP client unavailable, will retry on health checks",
 				"name", mcpClient.Name, "url", mcpClient.URL, "error", err)
@@ -556,4 +606,13 @@ func startPendingJanitor(ctx context.Context, c *cache.SQLiteCache, maxAge, even
 			}
 		}
 	}()
+}
+
+// redactURL hides credentials in a proxy URL for logging.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid>"
+	}
+	return u.Redacted()
 }

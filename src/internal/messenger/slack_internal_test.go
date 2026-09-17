@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/Duops/SherlockOps/internal/domain"
 )
@@ -894,5 +897,25 @@ func TestSlackSendAlert_FallsBackToInputChannelWhenResponseEmpty(t *testing.T) {
 	}
 	if ref.Channel != "#human-name" {
 		t.Errorf("expected fallback to input channel, got %q", ref.Channel)
+	}
+}
+
+func TestSlack_SetHTTPClientPropagatesProxyToWebSocket(t *testing.T) {
+	s := NewSlack("xoxb", "xapp", "", "#c", nil, testLogger())
+	if s.dialer != websocket.DefaultDialer {
+		t.Fatal("expected default dialer before SetHTTPClient")
+	}
+	proxy, _ := url.Parse("http://proxy.local:8888")
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxy)
+	s.SetHTTPClient(&http.Client{Transport: transport})
+
+	if s.dialer == websocket.DefaultDialer || s.dialer.Proxy == nil {
+		t.Fatal("expected a dialer with proxy")
+	}
+	req, _ := http.NewRequest(http.MethodGet, "wss://wss-primary.slack.com/link", nil)
+	got, err := s.dialer.Proxy(req)
+	if err != nil || got == nil || got.Host != "proxy.local:8888" {
+		t.Errorf("websocket proxy = %v, %v; want proxy.local:8888", got, err)
 	}
 }

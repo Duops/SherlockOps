@@ -4,7 +4,11 @@ document.addEventListener('DOMContentLoaded', function () {
     var envSelect = document.getElementById('stats-env');
     var topBody = document.getElementById('top-alerts-body');
     var envBody = document.getElementById('by-env-body');
-    var state = { days: '30', env: '' };
+    var state = { days: '30', env: '', reviewPoll: null };
+    var reviewText = document.getElementById('review-text');
+    var reviewMeta = document.getElementById('review-meta');
+    var reviewError = document.getElementById('review-error');
+    var reviewBtn = document.getElementById('review-run');
 
     function shareBar(pct) {
         var width = Math.max(0, Math.min(100, pct || 0));
@@ -90,10 +94,80 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    daysSelect.addEventListener('change', function () { state.days = this.value; load(); });
-    envSelect.addEventListener('change', function () { state.env = this.value; load(); });
+    function renderReview(data) {
+        var rev = data.review;
+        if (data.running) {
+            reviewBtn.disabled = true;
+            reviewBtn.textContent = 'Generating\u2026';
+        } else {
+            reviewBtn.disabled = false;
+            reviewBtn.textContent = 'Generate now';
+        }
+        reviewError.textContent = data.last_error ? 'Last attempt failed: ' + data.last_error : '';
+        if (!rev) {
+            reviewMeta.textContent = '';
+            reviewText.textContent = data.running
+                ? 'The review is being generated, this takes up to a minute.'
+                : 'No review yet. Reviews are generated on the configured interval, or press "Generate now".';
+            return;
+        }
+        var days = Math.round((Date.parse(rev.until) - Date.parse(rev.since)) / 86400000);
+        var meta = 'Period: ' + days + ' days \u00b7 generated ' + U.formatTime(rev.created_at);
+        if (rev.model) meta += ' \u00b7 ' + rev.model;
+        if (rev.cost_usd > 0) meta += ' \u00b7 ~$' + rev.cost_usd.toFixed(3);
+        reviewMeta.textContent = meta;
+        reviewText.innerHTML = U.renderMarkdown(rev.text);
+    }
 
-    function refresh() { U.loadHealth(); load(); }
+    function loadReview() {
+        var url = '/ui/api/alert-review' + (state.env ? '?env=' + encodeURIComponent(state.env) : '');
+        return U.fetchJSON(url).then(function (data) {
+            if (data.error) throw new Error(data.error);
+            renderReview(data);
+            return data;
+        }).catch(function () {
+            reviewMeta.textContent = '';
+            reviewError.textContent = '';
+            reviewText.textContent = 'Review is unavailable.';
+            reviewBtn.disabled = true;
+        });
+    }
+
+    function pollReview() {
+        if (state.reviewPoll) clearInterval(state.reviewPoll);
+        var attempts = 0;
+        state.reviewPoll = setInterval(function () {
+            attempts++;
+            loadReview().then(function (data) {
+                if (!data || !data.running || attempts > 60) {
+                    clearInterval(state.reviewPoll);
+                    state.reviewPoll = null;
+                }
+            });
+        }, 5000);
+    }
+
+    reviewBtn.addEventListener('click', function () {
+        reviewBtn.disabled = true;
+        reviewBtn.textContent = 'Generating\u2026';
+        var url = '/ui/api/alert-review/run?days=' + encodeURIComponent(state.days) +
+            (state.env ? '&env=' + encodeURIComponent(state.env) : '');
+        fetch(url, { method: 'POST' }).then(function (res) {
+            if (res.status === 202 || res.status === 409) {
+                reviewText.textContent = 'The review is being generated, this takes up to a minute.';
+                pollReview();
+            } else {
+                reviewBtn.disabled = false;
+                reviewBtn.textContent = 'Generate now';
+                reviewText.textContent = 'Failed to start the review.';
+            }
+        });
+    });
+
+    daysSelect.addEventListener('change', function () { state.days = this.value; load(); });
+    envSelect.addEventListener('change', function () { state.env = this.value; load(); loadReview(); });
+
+    function refresh() { U.loadHealth(); load(); loadReview(); }
     refresh();
     setInterval(refresh, 60000);
 });

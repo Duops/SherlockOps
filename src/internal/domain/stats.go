@@ -41,3 +41,17 @@ type EnvCount struct {
 	Share        float64 `json:"share"`
 	TopAlert     string  `json:"top_alert"`
 }
+
+// AlertReview is an LLM-written noise-reduction review of alert volume.
+type AlertReview struct {
+	ID           int64     `json:"id"`
+	Environment  string    `json:"environment"`
+	Since        time.Time `json:"since"`
+	Until        time.Time `json:"until"`
+	Text         string    `json:"text"`
+	Model        string    `json:"model"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	CostUSD      float64   `json:"cost_usd"`
+	CreatedAt    time.Time `json:"created_at"`
+}

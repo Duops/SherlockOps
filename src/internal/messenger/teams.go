@@ -660,3 +660,10 @@ type botEntity struct {
 	Type      string     `json:"type"`
 	Mentioned botAccount `json:"mentioned"`
 }
+
+// SetHTTPClient replaces the outbound HTTP client (e.g. to route through a proxy).
+func (t *TeamsMessenger) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		t.client = client
+	}
+}

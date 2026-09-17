@@ -464,3 +464,10 @@ func (p *PrometheusExecutor) execSeries(ctx context.Context, call domain.ToolCal
 
 // Target returns the Prometheus-compatible endpoint URL.
 func (p *PrometheusExecutor) Target() string { return p.url }
+
+// SetHTTPClient replaces the outbound HTTP client (e.g. to route through a proxy).
+func (p *PrometheusExecutor) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		p.client = client
+	}
+}

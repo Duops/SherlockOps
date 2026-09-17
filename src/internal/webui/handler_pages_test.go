@@ -136,3 +136,67 @@ func TestAPIAlertStats_DefaultsAndErrors(t *testing.T) {
 		t.Errorf("provider error: status %d, want 500", rec.Code)
 	}
 }
+
+type stubReview struct {
+	latest  *domain.AlertReview
+	running bool
+	started []string
+	err     error
+}
+
+func (s *stubReview) LatestReview(_ context.Context, env string) (*domain.AlertReview, error) {
+	if s.latest != nil && s.latest.Environment == env {
+		return s.latest, nil
+	}
+	return nil, nil
+}
+func (s *stubReview) StartReview(env string, window time.Duration) error {
+	s.started = append(s.started, env+"/"+window.String())
+	return s.err
+}
+func (s *stubReview) Running() bool     { return s.running }
+func (s *stubReview) LastError() string { return "" }
+
+func TestAPIAlertReview(t *testing.T) {
+	h, mux := newPagesHandler()
+	if rec := get(mux, "/ui/api/alert-review"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("without source: %d", rec.Code)
+	}
+	stub := &stubReview{latest: &domain.AlertReview{Environment: "prod", Text: "cut TargetDown"}}
+	h.SetReviewSource(stub)
+
+	rec := get(mux, "/ui/api/alert-review")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"review":null`) {
+		t.Errorf("all envs should have no review: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = get(mux, "/ui/api/alert-review?env=prod")
+	if !strings.Contains(rec.Body.String(), "cut TargetDown") {
+		t.Errorf("prod review missing: %s", rec.Body.String())
+	}
+}
+
+func TestAPIAlertReviewRun(t *testing.T) {
+	h, mux := newPagesHandler()
+	stub := &stubReview{}
+	h.SetReviewSource(stub)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ui/api/alert-review/run?env=prod&days=14", nil))
+	if rec.Code != http.StatusAccepted || len(stub.started) != 1 || stub.started[0] != "prod/336h0m0s" {
+		t.Errorf("run: %d, started=%v", rec.Code, stub.started)
+	}
+
+	stub.err = errReviewRunning
+	stub.running = true
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ui/api/alert-review/run", nil))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("concurrent run: %d, want 409", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/api/alert-review/run", nil))
+	if rec.Code == http.StatusAccepted {
+		t.Error("GET must not start a review")
+	}
+}

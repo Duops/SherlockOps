@@ -139,3 +139,35 @@ func TestAlertStats_WindowAndCleanup(t *testing.T) {
 		t.Errorf("CleanupEvents = %d, %v; want 1, nil", n, err)
 	}
 }
+
+func TestReviews_SaveAndLatest(t *testing.T) {
+	c, err := New(tempDB(t), time.Hour, 5)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+
+	if got, err := c.LatestReview(ctx, ""); err != nil || got != nil {
+		t.Fatalf("LatestReview empty = %v, %v", got, err)
+	}
+	first := &domain.AlertReview{Environment: "", Since: time.Now().Add(-7 * 24 * time.Hour), Until: time.Now(), Text: "first", Model: "m", InputTokens: 10, OutputTokens: 5, CostUSD: 0.01, CreatedAt: time.Now().Add(-time.Hour)}
+	second := &domain.AlertReview{Environment: "", Since: time.Now().Add(-7 * 24 * time.Hour), Until: time.Now(), Text: "second", CreatedAt: time.Now()}
+	prod := &domain.AlertReview{Environment: "prod", Since: time.Now().Add(-24 * time.Hour), Until: time.Now(), Text: "prod"}
+	for _, r := range []*domain.AlertReview{first, second, prod} {
+		if err := c.SaveReview(ctx, r); err != nil {
+			t.Fatalf("SaveReview: %v", err)
+		}
+	}
+	if first.ID == 0 || prod.CreatedAt.IsZero() {
+		t.Error("SaveReview must set ID and CreatedAt")
+	}
+	got, err := c.LatestReview(ctx, "")
+	if err != nil || got == nil || got.Text != "second" {
+		t.Errorf("LatestReview all = %+v, %v; want second", got, err)
+	}
+	got, err = c.LatestReview(ctx, "prod")
+	if err != nil || got == nil || got.Text != "prod" || got.InputTokens != 0 {
+		t.Errorf("LatestReview prod = %+v, %v", got, err)
+	}
+}

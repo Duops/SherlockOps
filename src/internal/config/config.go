@@ -1,8 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,18 +15,55 @@ import (
 
 // Config is the top-level configuration for sherlockops.
 type Config struct {
-	Server       ServerConfig                `yaml:"server"`
-	LLM          LLMConfig                   `yaml:"llm"`
-	Messengers   MessengersConfig            `yaml:"messengers"`
-	Cache        CacheConfig                 `yaml:"cache"`
-	Webhooks     WebhooksConfig              `yaml:"webhooks"`
-	Tools        ToolsConfig                 `yaml:"tools"`
-	MCP          MCPConfig                   `yaml:"mcp"`
-	Pipeline     PipelineConfig              `yaml:"pipeline"`
-	Runbooks     RunbookConfig               `yaml:"runbooks"`
-	Health       HealthConfig                `yaml:"health"`
-	Stats        StatsConfig                 `yaml:"stats"`
+	Server       ServerConfig                 `yaml:"server"`
+	LLM          LLMConfig                    `yaml:"llm"`
+	Messengers   MessengersConfig             `yaml:"messengers"`
+	Cache        CacheConfig                  `yaml:"cache"`
+	Webhooks     WebhooksConfig               `yaml:"webhooks"`
+	Tools        ToolsConfig                  `yaml:"tools"`
+	MCP          MCPConfig                    `yaml:"mcp"`
+	Pipeline     PipelineConfig               `yaml:"pipeline"`
+	Runbooks     RunbookConfig                `yaml:"runbooks"`
+	Health       HealthConfig                 `yaml:"health"`
+	Stats        StatsConfig                  `yaml:"stats"`
+	Proxy        ProxyConfig                  `yaml:"proxy"`
 	Environments map[string]EnvironmentConfig `yaml:"environments"`
+}
+
+// ProxyConfig holds the default outbound proxy for the LLM API and messengers (not tools).
+type ProxyConfig struct {
+	URL string `yaml:"url"`
+}
+
+// ProxyDirect is the proxy_url value that disables an inherited proxy.
+const ProxyDirect = "direct"
+
+// ResolveProxy returns the first non-empty proxy, most specific first; ProxyDirect means none.
+func ResolveProxy(levels ...string) string {
+	for _, v := range levels {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if v == ProxyDirect {
+			return ""
+		}
+		return v
+	}
+	return ""
+}
+
+// LLMProxy is the effective proxy for the LLM API.
+func (c *Config) LLMProxy() string { return ResolveProxy(c.LLM.ProxyURL, c.Proxy.URL) }
+
+// MessengerProxy is the effective proxy for one messenger's own proxy_url.
+func (c *Config) MessengerProxy(own string) string {
+	return ResolveProxy(own, c.Messengers.ProxyURL, c.Proxy.URL)
+}
+
+// ToolProxy is the effective proxy for one tool (tool → tools block → default tools block; never proxy.url).
+func ToolProxy(own string, blocks ...string) string {
+	return ResolveProxy(append([]string{own}, blocks...)...)
 }
 
 // HealthConfig holds tool connectivity monitoring settings.
@@ -41,7 +82,41 @@ func (h HealthConfig) ToolCheckIntervalDuration() time.Duration {
 
 // StatsConfig holds alert volume statistics settings.
 type StatsConfig struct {
-	Retention string `yaml:"retention"`
+	Retention      string `yaml:"retention"`
+	ReviewInterval string `yaml:"review_interval"` // "1d", "1w", "1mo", Go duration, or "" to disable
+}
+
+// ReviewIntervalDuration parses the review interval; empty, "0" or invalid means disabled.
+func (s StatsConfig) ReviewIntervalDuration() time.Duration {
+	d, err := ParseInterval(s.ReviewInterval)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// ParseInterval parses Go durations plus day/week/month suffixes: "1d", "2w", "1mo".
+func ParseInterval(v string) (time.Duration, error) {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "0" {
+		return 0, nil
+	}
+	units := map[string]time.Duration{"d": 24 * time.Hour, "w": 7 * 24 * time.Hour, "mo": 30 * 24 * time.Hour}
+	for suffix, unit := range units {
+		if !strings.HasSuffix(v, suffix) {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSuffix(v, suffix))
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("invalid interval %q", v)
+		}
+		return time.Duration(n) * unit, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid interval %q", v)
+	}
+	return d, nil
 }
 
 // RetentionDuration parses the retention; invalid or empty falls back to 90 days.
@@ -55,8 +130,8 @@ func (s StatsConfig) RetentionDuration() time.Duration {
 
 // EnvironmentConfig holds per-environment overrides for tools, MCP, and LLM settings.
 type EnvironmentConfig struct {
-	Tools ToolsConfig            `yaml:"tools"`
-	MCP   MCPConfig              `yaml:"mcp"`
+	Tools ToolsConfig             `yaml:"tools"`
+	MCP   MCPConfig               `yaml:"mcp"`
 	LLM   *LLMEnvironmentOverride `yaml:"llm,omitempty"`
 }
 
@@ -97,16 +172,17 @@ type ServerConfig struct {
 
 // LLMConfig holds LLM provider settings.
 type LLMConfig struct {
-	Provider         string  `yaml:"provider"`
-	APIKey           string  `yaml:"api_key"`
-	BaseURL          string  `yaml:"base_url"`
-	Model            string  `yaml:"model"`
-	MaxTokens        int     `yaml:"max_tokens"`
-	MaxIterations    int     `yaml:"max_iterations"`
-	SystemPrompt     string  `yaml:"system_prompt"`
-	Language         string  `yaml:"language"`
-	InputTokenCost   float64 `yaml:"input_token_cost"`  // $/1M input tokens (0 = auto-detect from model)
-	OutputTokenCost  float64 `yaml:"output_token_cost"` // $/1M output tokens (0 = auto-detect from model)
+	Provider        string  `yaml:"provider"`
+	APIKey          string  `yaml:"api_key"`
+	BaseURL         string  `yaml:"base_url"`
+	Model           string  `yaml:"model"`
+	MaxTokens       int     `yaml:"max_tokens"`
+	MaxIterations   int     `yaml:"max_iterations"`
+	SystemPrompt    string  `yaml:"system_prompt"`
+	Language        string  `yaml:"language"`
+	ProxyURL        string  `yaml:"proxy_url"`         // overrides proxy.url for the LLM API; "direct" disables
+	InputTokenCost  float64 `yaml:"input_token_cost"`  // $/1M input tokens (0 = auto-detect from model)
+	OutputTokenCost float64 `yaml:"output_token_cost"` // $/1M output tokens (0 = auto-detect from model)
 	// MaxToolOutputChars caps a single tool result's content before it is
 	// sent to the LLM. Prevents runaway context growth from big blobs
 	// (k8s listings, loki log chunks). 0 = no cap. Default 20000.
@@ -123,6 +199,7 @@ type MessengersConfig struct {
 	Telegram TelegramConfig     `yaml:"telegram"`
 	Teams    TeamsConfig        `yaml:"teams"`
 	Display  AlertDisplayConfig `yaml:"alert_display"`
+	ProxyURL string             `yaml:"proxy_url"` // default for all messengers
 }
 
 // AlertDisplayConfig toggles which optional fields are rendered in the alert
@@ -139,21 +216,23 @@ type AlertDisplayConfig struct {
 // TeamsConfig holds Microsoft Teams messenger settings.
 type TeamsConfig struct {
 	Enabled        bool   `yaml:"enabled"`
-	WebhookURL     string `yaml:"webhook_url"`     // simple mode: incoming webhook
-	TenantID       string `yaml:"tenant_id"`       // bot framework mode
+	ProxyURL       string `yaml:"proxy_url"`
+	WebhookURL     string `yaml:"webhook_url"` // simple mode: incoming webhook
+	TenantID       string `yaml:"tenant_id"`   // bot framework mode
 	ClientID       string `yaml:"client_id"`
 	ClientSecret   string `yaml:"client_secret"`
 	DefaultTeam    string `yaml:"default_team"`
 	DefaultChannel string `yaml:"default_channel"`
-	ListenPort     int    `yaml:"listen_port"`     // bot framework listener port (default 3978)
+	ListenPort     int    `yaml:"listen_port"` // bot framework listener port (default 3978)
 }
 
 // SlackConfig holds Slack messenger settings.
 type SlackConfig struct {
 	Enabled        bool     `yaml:"enabled"`
+	ProxyURL       string   `yaml:"proxy_url"`
 	BotToken       string   `yaml:"bot_token"`
 	AppToken       string   `yaml:"app_token"`
-	SigningSecret   string   `yaml:"signing_secret"`
+	SigningSecret  string   `yaml:"signing_secret"`
 	ListenChannels []string `yaml:"listen_channels"`
 	DefaultChannel string   `yaml:"default_channel"`
 }
@@ -161,6 +240,7 @@ type SlackConfig struct {
 // TelegramConfig holds Telegram messenger settings.
 type TelegramConfig struct {
 	Enabled     bool    `yaml:"enabled"`
+	ProxyURL    string  `yaml:"proxy_url"`
 	BotToken    string  `yaml:"bot_token"`
 	ListenChats []int64 `yaml:"listen_chats"`
 	DefaultChat int64   `yaml:"default_chat"`
@@ -190,34 +270,37 @@ type WebhooksConfig struct {
 
 // ToolsConfig holds external tool configurations.
 type ToolsConfig struct {
-	Prometheus       PrometheusConfig       `yaml:"prometheus"`
-	VictoriaMetrics  VictoriaMetricsConfig  `yaml:"victoriametrics"`
-	Loki             LokiConfig             `yaml:"loki"`
-	Kubernetes       KubernetesConfig       `yaml:"kubernetes"`
-	VSphere          VSphereConfig          `yaml:"vsphere"`
-	AWS              AWSConfig              `yaml:"aws"`
-	GCP              GCPConfig              `yaml:"gcp"`
-	Azure            AzureConfig            `yaml:"azure"`
-	Postgres         PostgresConfig         `yaml:"postgres"`
-	MongoDB          MongoDBConfig          `yaml:"mongodb"`
-	YandexCloud      YandexCloudConfig      `yaml:"yandex_cloud"`
-	DigitalOcean     DigitalOceanConfig     `yaml:"digitalocean"`
+	Prometheus      PrometheusConfig      `yaml:"prometheus"`
+	ProxyURL        string                `yaml:"proxy_url"` // default for all tools in this block
+	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriametrics"`
+	Loki            LokiConfig            `yaml:"loki"`
+	Kubernetes      KubernetesConfig      `yaml:"kubernetes"`
+	VSphere         VSphereConfig         `yaml:"vsphere"`
+	AWS             AWSConfig             `yaml:"aws"`
+	GCP             GCPConfig             `yaml:"gcp"`
+	Azure           AzureConfig           `yaml:"azure"`
+	Postgres        PostgresConfig        `yaml:"postgres"`
+	MongoDB         MongoDBConfig         `yaml:"mongodb"`
+	YandexCloud     YandexCloudConfig     `yaml:"yandex_cloud"`
+	DigitalOcean    DigitalOceanConfig    `yaml:"digitalocean"`
 }
 
 // VictoriaMetricsConfig holds VictoriaMetrics connection settings.
 // Uses the same Prometheus-compatible API, but listed separately for clarity.
 type VictoriaMetricsConfig struct {
 	Enabled  bool   `yaml:"enabled"`
+	ProxyURL string `yaml:"proxy_url"`
 	URL      string `yaml:"url"`      // e.g., http://victoriametrics:8428
 	Username string `yaml:"username"` // basic auth (optional)
 	Password string `yaml:"password"`
-	Tenant   string `yaml:"tenant"`   // for cluster version: "0:0" or "accountID:projectID"
+	Tenant   string `yaml:"tenant"` // for cluster version: "0:0" or "accountID:projectID"
 }
 
 // VSphereConfig holds VMware vSphere/vCenter connection settings.
 type VSphereConfig struct {
 	Enabled  bool   `yaml:"enabled"`
-	URL      string `yaml:"url"`      // e.g., https://vcenter.example.com
+	ProxyURL string `yaml:"proxy_url"`
+	URL      string `yaml:"url"` // e.g., https://vcenter.example.com
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	Insecure bool   `yaml:"insecure"` // skip TLS verification
@@ -277,6 +360,7 @@ type DigitalOceanConfig struct {
 // PrometheusConfig holds Prometheus connection settings.
 type PrometheusConfig struct {
 	Enabled  bool   `yaml:"enabled"`
+	ProxyURL string `yaml:"proxy_url"`
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
@@ -285,6 +369,7 @@ type PrometheusConfig struct {
 // LokiConfig holds Loki connection settings.
 type LokiConfig struct {
 	Enabled  bool   `yaml:"enabled"`
+	ProxyURL string `yaml:"proxy_url"`
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
@@ -293,6 +378,7 @@ type LokiConfig struct {
 // KubernetesConfig holds Kubernetes connection settings.
 type KubernetesConfig struct {
 	Enabled    bool   `yaml:"enabled"`
+	ProxyURL   string `yaml:"proxy_url"`
 	Kubeconfig string `yaml:"kubeconfig"`
 	Context    string `yaml:"context"`
 }
@@ -305,11 +391,12 @@ type MCPConfig struct {
 
 // MCPClientConfig holds a single MCP client connection.
 type MCPClientConfig struct {
-	Name    string            `yaml:"name"`
-	URL     string            `yaml:"url"`
-	Auth    string            `yaml:"auth"`
-	Token   string            `yaml:"token"`
-	Headers map[string]string `yaml:"headers"`
+	Name     string            `yaml:"name"`
+	ProxyURL string            `yaml:"proxy_url"`
+	URL      string            `yaml:"url"`
+	Auth     string            `yaml:"auth"`
+	Token    string            `yaml:"token"`
+	Headers  map[string]string `yaml:"headers"`
 }
 
 // MCPBridgeConfig holds MCP bridge settings.
@@ -327,6 +414,10 @@ func Load(path string) (*Config, error) {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read config file: %w", err)
+		}
+		data, err = expandEnv(data)
+		if err != nil {
+			return nil, fmt.Errorf("config file: %w", err)
 		}
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("parse config file: %w", err)
@@ -382,6 +473,7 @@ func applyDefaults(cfg *Config) {
 
 	cfg.Health.ToolCheckInterval = "1m"
 	cfg.Stats.Retention = "2160h"
+	cfg.Stats.ReviewInterval = "1w"
 }
 
 // inheritDefaultMCPClients copies top-level mcp.clients into environments without their own.
@@ -396,6 +488,32 @@ func inheritDefaultMCPClients(cfg *Config) {
 		env.MCP.Clients = append([]MCPClientConfig(nil), cfg.MCP.Clients...)
 		cfg.Environments[name] = env
 	}
+}
+
+var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)
+
+// expandEnv replaces ${VAR} and ${VAR:-default}; an unset VAR without default is an error.
+func expandEnv(data []byte) ([]byte, error) {
+	var missing []string
+	out := envRef.ReplaceAllFunc(data, func(m []byte) []byte {
+		parts := envRef.FindSubmatch(m)
+		name := string(parts[1])
+		if v, ok := os.LookupEnv(name); ok {
+			return []byte(v)
+		}
+		if len(parts) > 2 && parts[2] != nil {
+			return parts[2]
+		}
+		if bytes.Contains(m, []byte(":-")) {
+			return nil
+		}
+		missing = append(missing, name)
+		return m
+	})
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("environment variables not set: %s", strings.Join(missing, ", "))
+	}
+	return out, nil
 }
 
 func applyEnvOverrides(cfg *Config) {
@@ -433,6 +551,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("TEAMS_CLIENT_SECRET"); v != "" {
 		cfg.Messengers.Teams.ClientSecret = v
+	}
+	if v := os.Getenv("PROXY_URL"); v != "" {
+		cfg.Proxy.URL = v
 	}
 }
 
@@ -479,6 +600,17 @@ func (c *Config) Validate() error {
 	}
 	if _, err := time.ParseDuration(c.Stats.Retention); err != nil {
 		errs = append(errs, fmt.Sprintf("stats.retention is not a valid duration: %v", err))
+	}
+	if _, err := ParseInterval(c.Stats.ReviewInterval); err != nil {
+		errs = append(errs, fmt.Sprintf("stats.review_interval: %v (use e.g. 1d, 1w, 1mo or 72h)", err))
+	}
+	for field, v := range c.proxyFields() {
+		if v == "" || v == ProxyDirect {
+			continue
+		}
+		if u, err := url.Parse(v); err != nil || u.Scheme == "" || u.Host == "" {
+			errs = append(errs, fmt.Sprintf("%s must be an absolute URL like http://host:port or %q, got %q", field, ProxyDirect, v))
+		}
 	}
 
 	slackConfigured := c.Messengers.Slack.Enabled
@@ -535,3 +667,30 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// proxyFields lists every proxy_url in the config with its path, for validation.
+func (c *Config) proxyFields() map[string]string {
+	out := map[string]string{
+		"proxy.url":                     c.Proxy.URL,
+		"llm.proxy_url":                 c.LLM.ProxyURL,
+		"messengers.proxy_url":          c.Messengers.ProxyURL,
+		"messengers.slack.proxy_url":    c.Messengers.Slack.ProxyURL,
+		"messengers.telegram.proxy_url": c.Messengers.Telegram.ProxyURL,
+		"messengers.teams.proxy_url":    c.Messengers.Teams.ProxyURL,
+	}
+	addTools := func(prefix string, t ToolsConfig, m MCPConfig) {
+		out[prefix+"proxy_url"] = t.ProxyURL
+		out[prefix+"prometheus.proxy_url"] = t.Prometheus.ProxyURL
+		out[prefix+"victoriametrics.proxy_url"] = t.VictoriaMetrics.ProxyURL
+		out[prefix+"loki.proxy_url"] = t.Loki.ProxyURL
+		out[prefix+"kubernetes.proxy_url"] = t.Kubernetes.ProxyURL
+		out[prefix+"vsphere.proxy_url"] = t.VSphere.ProxyURL
+		for i, cl := range m.Clients {
+			out[fmt.Sprintf("%smcp.clients[%d].proxy_url", strings.TrimSuffix(prefix, "tools."), i)] = cl.ProxyURL
+		}
+	}
+	addTools("tools.", c.Tools, c.MCP)
+	for name, env := range c.Environments {
+		addTools("environments."+name+".tools.", env.Tools, env.MCP)
+	}
+	return out
+}

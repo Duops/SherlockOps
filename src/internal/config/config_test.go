@@ -591,3 +591,178 @@ stats:
 		t.Errorf("expected both fields in error, got: %v", err)
 	}
 }
+
+func TestProxyConfig(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Proxy.URL != "" {
+		t.Errorf("proxy.url default = %q, want empty", cfg.Proxy.URL)
+	}
+
+	t.Setenv("PROXY_URL", "http://user:pass@proxy.local:8888")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("Load with PROXY_URL: %v", err)
+	}
+	if cfg.Proxy.URL != "http://user:pass@proxy.local:8888" {
+		t.Errorf("proxy.url from env = %q", cfg.Proxy.URL)
+	}
+
+	t.Setenv("PROXY_URL", "proxy.local:8888")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "proxy.url") {
+		t.Errorf("expected proxy.url validation error, got %v", err)
+	}
+}
+
+func TestResolveProxy(t *testing.T) {
+	cases := []struct {
+		levels []string
+		want   string
+	}{
+		{[]string{"", "", "http://global:1"}, "http://global:1"},
+		{[]string{"http://own:1", "http://block:1", "http://global:1"}, "http://own:1"},
+		{[]string{"", "direct", "http://global:1"}, ""},
+		{[]string{"direct"}, ""},
+		{[]string{"", ""}, ""},
+	}
+	for _, c := range cases {
+		if got := ResolveProxy(c.levels...); got != c.want {
+			t.Errorf("ResolveProxy(%v) = %q, want %q", c.levels, got, c.want)
+		}
+	}
+}
+
+func TestProxyLevelsFromFile(t *testing.T) {
+	content := `
+proxy:
+  url: "http://global:1"
+llm:
+  proxy_url: "http://llm:1"
+messengers:
+  proxy_url: "http://msg:1"
+  slack:
+    proxy_url: "direct"
+tools:
+  proxy_url: "http://tools:1"
+  loki:
+    enabled: true
+    url: "http://loki"
+    proxy_url: "direct"
+environments:
+  prod:
+    tools:
+      victoriametrics:
+        enabled: true
+        url: "http://vm"
+        proxy_url: "http://vm-proxy:1"
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.LLMProxy(); got != "http://llm:1" {
+		t.Errorf("LLMProxy = %q", got)
+	}
+	if got := cfg.MessengerProxy(cfg.Messengers.Slack.ProxyURL); got != "" {
+		t.Errorf("slack proxy should be direct, got %q", got)
+	}
+	if got := cfg.MessengerProxy(cfg.Messengers.Telegram.ProxyURL); got != "http://msg:1" {
+		t.Errorf("telegram proxy = %q, want messengers default", got)
+	}
+	// Tools never inherit the global proxy; loki opted out of the tools default.
+	if got := ToolProxy(cfg.Tools.Loki.ProxyURL, cfg.Tools.ProxyURL); got != "" {
+		t.Errorf("loki proxy should be direct, got %q", got)
+	}
+	if got := ToolProxy(cfg.Tools.Kubernetes.ProxyURL, cfg.Tools.ProxyURL); got != "http://tools:1" {
+		t.Errorf("kubernetes proxy = %q, want tools default", got)
+	}
+	prod := cfg.Environments["prod"]
+	if got := ToolProxy(prod.Tools.VictoriaMetrics.ProxyURL, prod.Tools.ProxyURL, cfg.Tools.ProxyURL); got != "http://vm-proxy:1" {
+		t.Errorf("prod vm proxy = %q", got)
+	}
+	if got := ToolProxy(prod.Tools.Loki.ProxyURL, prod.Tools.ProxyURL, cfg.Tools.ProxyURL); got != "http://tools:1" {
+		t.Errorf("prod loki proxy = %q, want inherited tools default", got)
+	}
+}
+
+func TestProxyValidationNamesField(t *testing.T) {
+	content := `
+environments:
+  prod:
+    tools:
+      loki:
+        proxy_url: "not-a-url"
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "environments.prod.tools.loki.proxy_url") {
+		t.Errorf("expected field path in error, got %v", err)
+	}
+}
+
+func TestExpandEnvInConfig(t *testing.T) {
+	t.Setenv("TEST_PROXY", "http://from-env:3128")
+	content := `
+proxy:
+  url: "${TEST_PROXY}"
+llm:
+  proxy_url: "${TEST_UNSET_WITH_DEFAULT:-direct}"
+stats:
+  retention: "${TEST_UNSET_EMPTY:-}2160h"
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Proxy.URL != "http://from-env:3128" {
+		t.Errorf("proxy.url = %q", cfg.Proxy.URL)
+	}
+	if cfg.LLM.ProxyURL != "direct" || cfg.LLMProxy() != "" {
+		t.Errorf("llm.proxy_url = %q, LLMProxy = %q", cfg.LLM.ProxyURL, cfg.LLMProxy())
+	}
+	if cfg.Stats.Retention != "2160h" {
+		t.Errorf("stats.retention = %q", cfg.Stats.Retention)
+	}
+
+	if err := os.WriteFile(path, []byte("proxy:\n  url: \"${TEST_DEFINITELY_UNSET}\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "TEST_DEFINITELY_UNSET") {
+		t.Errorf("expected missing variable error, got %v", err)
+	}
+}
+
+func TestParseInterval(t *testing.T) {
+	cases := map[string]time.Duration{
+		"1d": 24 * time.Hour, "2w": 14 * 24 * time.Hour, "1mo": 30 * 24 * time.Hour,
+		"72h": 72 * time.Hour, "": 0, "0": 0,
+	}
+	for in, want := range cases {
+		got, err := ParseInterval(in)
+		if err != nil || got != want {
+			t.Errorf("ParseInterval(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"soon", "1x", "-1d", "0d"} {
+		if _, err := ParseInterval(bad); err == nil {
+			t.Errorf("ParseInterval(%q) should fail", bad)
+		}
+	}
+	cfg, _ := Load("")
+	if cfg.Stats.ReviewIntervalDuration() != 7*24*time.Hour {
+		t.Errorf("default review interval = %v, want 1w", cfg.Stats.ReviewIntervalDuration())
+	}
+}

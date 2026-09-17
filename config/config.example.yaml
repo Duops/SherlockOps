@@ -91,6 +91,17 @@ cache:
   path: "/data/cache.db"
   min_length: 200       # Don't cache short responses (likely errors)
 
+# ─── Outbound proxy ───────────────────────────────────────────
+# Default proxy for the LLM API and messengers. Tools do NOT inherit it.
+# Any block below may override it with its own proxy_url; the most specific
+# wins, and the value "direct" disables an inherited proxy:
+#   llm.proxy_url, messengers.proxy_url, messengers.<name>.proxy_url,
+#   tools.proxy_url, tools.<name>.proxy_url, mcp.clients[].proxy_url,
+#   environments.<env>.tools.proxy_url, environments.<env>.tools.<name>.proxy_url
+# Values may reference environment variables: ${PROXY_URL} or ${PROXY_URL:-}.
+proxy:
+  url: "${PROXY_URL:-}"       # e.g. "http://user:pass@proxy.example.com:8888"
+
 # ─── Tool health monitoring ───────────────────────────────────
 health:
   tool_check_interval: "1m"   # how often every tool of every environment is probed (Tools page + logs)
@@ -98,6 +109,8 @@ health:
 # ─── Alert volume statistics ──────────────────────────────────
 stats:
   retention: "2160h"          # keep per-notification events for 90 days (Stats page)
+  review_interval: "1w"       # how often the LLM writes a noise-reduction review of the alert
+                              # volume ("1d", "1w", "1mo", or Go duration). "" disables it.
 
 # ─── Pipeline ─────────────────────────────────────────────────
 pipeline:
