@@ -358,3 +358,10 @@ func (c *MCPClient) Target() string { return c.url }
 
 // Name returns the configured client name.
 func (c *MCPClient) Name() string { return c.name }
+
+// SetHTTPClient replaces the outbound HTTP client (e.g. to route through a proxy).
+func (c *MCPClient) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		c.client = client
+	}
+}

@@ -157,3 +157,10 @@ type EventRecorder interface {
 type StatsProvider interface {
 	AlertStats(ctx context.Context, since time.Time, env string) (*AlertStats, error)
 }
+
+// ReviewStore persists alert noise-reduction reviews.
+type ReviewStore interface {
+	SaveReview(ctx context.Context, r *AlertReview) error
+	// LatestReview returns the newest review for env ("" = all environments) or nil.
+	LatestReview(ctx context.Context, env string) (*AlertReview, error)
+}

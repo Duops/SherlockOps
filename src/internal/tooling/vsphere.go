@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -638,3 +639,18 @@ func toStringSlice(v interface{}) []string {
 
 // Target returns the vCenter URL.
 func (v *VSphereExecutor) Target() string { return v.url }
+
+// SetProxy routes vCenter calls through the given proxy while keeping the TLS settings.
+func (v *VSphereExecutor) SetProxy(proxyURL string) error {
+	if proxyURL == "" {
+		return nil
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("invalid proxy url %q", proxyURL)
+	}
+	if t, ok := v.client.Transport.(*http.Transport); ok {
+		t.Proxy = http.ProxyURL(u)
+	}
+	return nil
+}

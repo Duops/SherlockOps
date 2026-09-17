@@ -681,3 +681,10 @@ func (t *TelegramMessenger) isListenChat(chatID int64) bool {
 	}
 	return false
 }
+
+// SetHTTPClient replaces the outbound HTTP client (e.g. to route through a proxy).
+func (t *TelegramMessenger) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		t.client = client
+	}
+}

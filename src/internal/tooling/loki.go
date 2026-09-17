@@ -328,3 +328,10 @@ func (l *LokiExecutor) doGet(ctx context.Context, u string) ([]byte, error) {
 
 // Target returns the Loki endpoint URL.
 func (l *LokiExecutor) Target() string { return l.url }
+
+// SetHTTPClient replaces the outbound HTTP client (e.g. to route through a proxy).
+func (l *LokiExecutor) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		l.client = client
+	}
+}

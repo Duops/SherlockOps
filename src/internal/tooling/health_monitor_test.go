@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -157,5 +159,32 @@ func TestCheckHealth_MCPClientUsesConfiguredName(t *testing.T) {
 	results := CheckHealth(context.Background(), "prod", reg, logger)
 	if len(results) != 1 || results[0].Tool != "k8s-mcp" || results[0].Status != domain.ToolHealthFailed {
 		t.Fatalf("unexpected result: %+v", results)
+	}
+}
+
+func TestKubernetesExecutor_InvalidProxyRejected(t *testing.T) {
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	content := `apiVersion: v1
+kind: Config
+clusters:
+- name: c
+  cluster: {server: "https://127.0.0.1:6443"}
+contexts:
+- name: ctx
+  context: {cluster: c, user: u}
+current-context: ctx
+users:
+- name: u
+  user: {token: "t"}
+`
+	if err := os.WriteFile(kubeconfig, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewKubernetesExecutorWithProxy(kubeconfig, "", "not a url", nil); err == nil || !strings.Contains(err.Error(), "invalid proxy url") {
+		t.Errorf("expected invalid proxy error, got %v", err)
+	}
+	k, err := NewKubernetesExecutorWithProxy(kubeconfig, "ctx", "http://proxy.local:8888", nil)
+	if err != nil || k.Target() != kubeconfig+" (ctx)" {
+		t.Errorf("valid proxy: %v, target=%q", err, k.Target())
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Duops/SherlockOps/internal/domain"
@@ -31,6 +33,11 @@ func (k *KubernetesExecutor) Target() string { return k.target }
 // kubeconfig is the path to a kubeconfig file; if empty, in-cluster config is used.
 // kubeContext is the kubeconfig context to use; if empty, the current context is used.
 func NewKubernetesExecutor(kubeconfig, kubeContext string, logger *slog.Logger) (*KubernetesExecutor, error) {
+	return NewKubernetesExecutorWithProxy(kubeconfig, kubeContext, "", logger)
+}
+
+// NewKubernetesExecutorWithProxy is NewKubernetesExecutor with an optional HTTP proxy for API calls.
+func NewKubernetesExecutorWithProxy(kubeconfig, kubeContext, proxyURL string, logger *slog.Logger) (*KubernetesExecutor, error) {
 	var config *rest.Config
 	var err error
 
@@ -59,6 +66,14 @@ func NewKubernetesExecutor(kubeconfig, kubeContext string, logger *slog.Logger) 
 		if err != nil {
 			return nil, fmt.Errorf("in-cluster config: %w", err)
 		}
+	}
+
+	if proxyURL != "" {
+		u, err := url.Parse(proxyURL)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("invalid proxy url %q", proxyURL)
+		}
+		config.Proxy = http.ProxyURL(u)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)

@@ -27,6 +27,7 @@ type SlackMessenger struct {
 	defaultChannel string
 	listenChannels []string
 	client         *http.Client
+	dialer         *websocket.Dialer
 	handler        func(alert *domain.Alert)
 	logger         *slog.Logger
 	cancel         context.CancelFunc
@@ -52,6 +53,7 @@ func NewSlack(botToken, appToken, signingSecret, defaultChannel string, listenCh
 		defaultChannel: defaultChannel,
 		listenChannels: listenChannels,
 		client:         &http.Client{Timeout: 30 * time.Second},
+		dialer:         websocket.DefaultDialer,
 		logger:         logger,
 		baseURL:        "https://slack.com/api",
 		recentEvents:   make(map[string]time.Time),
@@ -611,7 +613,7 @@ const wsReadTimeout = 60 * time.Second
 
 // listenWebSocket reads events from the WebSocket connection.
 func (s *SlackMessenger) listenWebSocket(ctx context.Context, wssURL string) {
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wssURL, nil)
+	conn, _, err := s.dialer.DialContext(ctx, wssURL, nil)
 	if err != nil {
 		s.logger.Error("websocket dial failed", slog.String("error", err.Error()))
 		return
@@ -958,4 +960,18 @@ func (s *SlackMessenger) isListenChannel(channel string) bool {
 		}
 	}
 	return false
+}
+
+// SetHTTPClient routes Web API calls and the Socket Mode WebSocket through the client's proxy.
+func (s *SlackMessenger) SetHTTPClient(client *http.Client) {
+	if client == nil {
+		return
+	}
+	s.client = client
+	dialer := *websocket.DefaultDialer
+	if t, ok := client.Transport.(*http.Transport); ok {
+		dialer.Proxy = t.Proxy
+		dialer.TLSClientConfig = t.TLSClientConfig
+	}
+	s.dialer = &dialer
 }

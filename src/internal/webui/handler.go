@@ -34,6 +34,7 @@ type Handler struct {
 	pending PendingLister
 	health  HealthSource
 	stats   domain.StatsProvider
+	review  ReviewSource
 	logger  *slog.Logger
 	tmpl    *template.Template
 }
@@ -60,6 +61,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/health", h.healthPage)
 	mux.HandleFunc("GET /ui/api/health/tools", h.apiToolHealth)
 	mux.HandleFunc("GET /ui/api/alert-stats", h.apiAlertStats)
+	mux.HandleFunc("GET /ui/api/alert-review", h.apiAlertReview)
+	mux.HandleFunc("POST /ui/api/alert-review/run", h.apiAlertReviewRun)
 	mux.HandleFunc("GET /ui/api/alerts", h.apiAlerts)
 	mux.HandleFunc("GET /ui/api/alerts/{fingerprint}", h.apiAlert)
 	mux.HandleFunc("GET /ui/api/stats", h.apiStats)
