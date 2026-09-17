@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Duops/SherlockOps/internal/domain"
@@ -153,5 +154,19 @@ func TestAlertmanagerReceiver_ParseInvalidJSON(t *testing.T) {
 	_, err := r.Parse(context.Background(), []byte("not json"), nil)
 	if err == nil {
 		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestBuildSilenceURL_EncodesSpacesAsPercent20(t *testing.T) {
+	got := buildSilenceURL("https://am.example.com", map[string]string{
+		"alertname": "DomainProbeFailed",
+		"domain":    "99usdt.io",
+	})
+	want := "https://am.example.com/#/silences/new?filter=%7Balertname%3D%22DomainProbeFailed%22%2C%20domain%3D%2299usdt.io%22%7D"
+	if got != want {
+		t.Errorf("silence url\n got: %s\nwant: %s", got, want)
+	}
+	if strings.Contains(got, "+") {
+		t.Error("silence url must not use '+' for spaces: Alertmanager UI decodes the fragment with decodeURIComponent")
 	}
 }

@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -631,5 +633,81 @@ func TestEnvironmentRoundTrip(t *testing.T) {
 	}
 	if list[0].Environment != "pay-prod" {
 		t.Errorf("List environment = %q, want %q", list[0].Environment, "pay-prod")
+	}
+}
+
+func seedFiltered(t *testing.T, c *SQLiteCache) {
+	t.Helper()
+	ctx := context.Background()
+	rows := []*domain.AnalysisResult{
+		{AlertFingerprint: "fp-a", AlertName: "TargetDown", Source: "alertmanager", Environment: "pay-prod", Severity: "warning", Text: "target down analysis text"},
+		{AlertFingerprint: "fp-b", AlertName: "KubePodCrashLooping", Source: "alertmanager", Environment: "easysend-dev", Severity: "critical", Text: "pod crash analysis text"},
+		{AlertFingerprint: "fp-c", AlertName: "CPUThrottlingHigh", Source: "grafana", Environment: "", Severity: "info", Text: "cpu throttling analysis"},
+	}
+	for _, r := range rows {
+		if err := c.Set(ctx, r); err != nil {
+			t.Fatalf("Set %s: %v", r.AlertFingerprint, err)
+		}
+	}
+	if err := c.MarkResolved(ctx, "fp-b", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListFiltered(t *testing.T) {
+	c, err := New(tempDB(t), time.Hour, 5)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close()
+	seedFiltered(t, c)
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		filter domain.AlertFilter
+		want   []string
+	}{
+		{"all", domain.AlertFilter{}, []string{"fp-a", "fp-b", "fp-c"}},
+		{"source", domain.AlertFilter{Source: "grafana"}, []string{"fp-c"}},
+		{"environment", domain.AlertFilter{Environment: "pay-prod"}, []string{"fp-a"}},
+		{"default environment", domain.AlertFilter{Environment: "default"}, []string{"fp-c"}},
+		{"severity", domain.AlertFilter{Severity: "critical"}, []string{"fp-b"}},
+		{"resolved", domain.AlertFilter{Status: "resolved"}, []string{"fp-b"}},
+		{"firing", domain.AlertFilter{Status: "firing"}, []string{"fp-a", "fp-c"}},
+		{"search name", domain.AlertFilter{Search: "targetdown"}, []string{"fp-a"}},
+		{"search text", domain.AlertFilter{Search: "crash analysis"}, []string{"fp-b"}},
+		{"search escapes like", domain.AlertFilter{Search: "100%"}, nil},
+		{"combined", domain.AlertFilter{Source: "alertmanager", Status: "firing"}, []string{"fp-a"}},
+	}
+	for _, tc := range cases {
+		got, total, err := c.ListFiltered(ctx, tc.filter, 50, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var ids []string
+		for _, r := range got {
+			ids = append(ids, r.AlertFingerprint)
+		}
+		sort.Strings(ids)
+		if total != len(tc.want) || strings.Join(ids, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: got %v (total %d), want %v", tc.name, ids, total, tc.want)
+		}
+	}
+
+	page, total, err := c.ListFiltered(ctx, domain.AlertFilter{}, 2, 2)
+	if err != nil || total != 3 || len(page) != 1 {
+		t.Errorf("paging: len=%d total=%d err=%v; want 1/3", len(page), total, err)
+	}
+
+	facets, err := c.Facets(ctx)
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	if strings.Join(facets.Sources, ",") != "alertmanager,grafana" {
+		t.Errorf("sources = %v", facets.Sources)
+	}
+	if strings.Join(facets.Environments, ",") != "default,easysend-dev,pay-prod" {
+		t.Errorf("environments = %v", facets.Environments)
 	}
 }

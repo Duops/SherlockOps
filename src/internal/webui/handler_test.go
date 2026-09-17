@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -562,5 +563,62 @@ func TestApiAlerts_IncludesEnvironment(t *testing.T) {
 	}
 	if envs["fp-pending"] != "easysend-dev" {
 		t.Errorf("pending environment = %q, want %q", envs["fp-pending"], "easysend-dev")
+	}
+}
+
+// filteredMockCache records the filter the handler passed and serves facets.
+type filteredMockCache struct {
+	mockCache
+	gotFilter domain.AlertFilter
+	gotLimit  int
+	gotOffset int
+}
+
+func (m *filteredMockCache) ListFiltered(_ context.Context, f domain.AlertFilter, limit, offset int) ([]*domain.AnalysisResult, int, error) {
+	m.gotFilter, m.gotLimit, m.gotOffset = f, limit, offset
+	return m.mockCache.List(context.Background(), limit, offset)
+}
+
+func (m *filteredMockCache) Facets(_ context.Context) (*domain.AlertFacets, error) {
+	return &domain.AlertFacets{Sources: []string{"alertmanager"}, Environments: []string{"default", "prod"}}, nil
+}
+
+func TestAPIAlerts_ServerSideFiltersAndFacets(t *testing.T) {
+	now := time.Now()
+	c := &filteredMockCache{mockCache: mockCache{alerts: []*domain.AnalysisResult{
+		{AlertFingerprint: "fp-1", AlertName: "A", CachedAt: now},
+		{AlertFingerprint: "fp-2", AlertName: "B", CachedAt: now},
+	}}}
+	h := New(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.SetPendingLister(&stubPendingLister{items: []PendingItem{
+		{Alert: &domain.Alert{Fingerprint: "fp-pending", Name: "Pending", Source: "alertmanager", Environment: "prod"}, CreatedAt: now},
+	}})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := get(mux, "/ui/api/alerts?limit=20&offset=20&source=alertmanager&env=prod&severity=warning&status=firing&q=cpu")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	want := domain.AlertFilter{Source: "alertmanager", Environment: "prod", Severity: "warning", Status: "firing", Search: "cpu"}
+	if c.gotFilter != want || c.gotLimit != 20 || c.gotOffset != 20 {
+		t.Errorf("filter passed = %+v limit=%d offset=%d", c.gotFilter, c.gotLimit, c.gotOffset)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"facets":{"sources":["alertmanager"],"environments":["default","prod"]}`) {
+		t.Errorf("facets missing: %s", body)
+	}
+	if strings.Contains(body, "fp-pending") {
+		t.Error("pending alerts must only be merged on the first page")
+	}
+
+	// First page: the pending alert matches source+env, but not severity=warning.
+	rec = get(mux, "/ui/api/alerts?source=alertmanager&env=prod&severity=warning")
+	if strings.Contains(rec.Body.String(), "fp-pending") {
+		t.Error("pending alert must respect filters")
+	}
+	rec = get(mux, "/ui/api/alerts?source=alertmanager&env=prod")
+	if !strings.Contains(rec.Body.String(), "fp-pending") {
+		t.Errorf("pending alert matching filters should be merged on first page: %s", rec.Body.String())
 	}
 }

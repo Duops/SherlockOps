@@ -1,6 +1,10 @@
 document.addEventListener('DOMContentLoaded', function () {
+    var PAGE_SIZE = 20;
     var state = {
         alerts: [],
+        total: 0,
+        page: 0,
+        facets: null,
         expandedFingerprint: null,
         filterSource: '',
         filterEnv: '',
@@ -8,11 +12,14 @@ document.addEventListener('DOMContentLoaded', function () {
         filterStatus: '',
         searchName: '',
     };
+    var U = window.SherlockUI;
+    var searchTimer = null;
 
     var refreshInterval = 30000;
     var timer = null;
 
     var alertsBody = document.getElementById('alerts-body');
+    var alertsPager = document.getElementById('alerts-pager');
     var searchInput = document.getElementById('search-name');
     var filterSource = document.getElementById('filter-source');
     var filterEnv = document.getElementById('filter-env');
@@ -61,73 +68,55 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    function alertsURL() {
+        var params = [
+            'limit=' + PAGE_SIZE,
+            'offset=' + (state.page * PAGE_SIZE),
+        ];
+        if (state.filterSource) params.push('source=' + encodeURIComponent(state.filterSource));
+        if (state.filterEnv) params.push('env=' + encodeURIComponent(state.filterEnv));
+        if (state.filterSeverity) params.push('severity=' + encodeURIComponent(state.filterSeverity));
+        if (state.filterStatus) params.push('status=' + encodeURIComponent(state.filterStatus));
+        if (state.searchName) params.push('q=' + encodeURIComponent(state.searchName));
+        return '/ui/api/alerts?' + params.join('&');
+    }
+
     function loadAlerts() {
-        fetchJSON('/ui/api/alerts?limit=50').then(function (data) {
+        fetchJSON(alertsURL()).then(function (data) {
             state.alerts = data.alerts || [];
-            populateSources();
-            populateEnvironments();
+            state.total = data.total || 0;
+            if (data.facets) state.facets = data.facets;
+            var pages = Math.ceil(state.total / PAGE_SIZE);
+            if (pages > 0 && state.page >= pages) {
+                state.page = pages - 1;
+                return loadAlerts();
+            }
+            populateFilters();
             renderAlerts();
         }).catch(function () {
             alertsBody.innerHTML = '<tr><td colspan="9" class="empty-state">Failed to load alerts</td></tr>';
         });
     }
 
-    function populateSources() {
-        var sources = {};
-        state.alerts.forEach(function (a) {
-            if (a.source) sources[a.source] = true;
-        });
-        var current = state.filterSource || filterSource.value;
-        filterSource.innerHTML = '<option value="">All Sources</option>';
-        Object.keys(sources).sort().forEach(function (s) {
-            var opt = document.createElement('option');
-            opt.value = s;
-            opt.textContent = s;
-            if (s === current) opt.selected = true;
-            filterSource.appendChild(opt);
-        });
+    function populateFilters() {
+        var sources = state.facets ? state.facets.sources : [];
+        var envs = state.facets ? state.facets.environments : [];
+        if (!state.facets) {
+            var s = {}, e = {};
+            state.alerts.forEach(function (a) {
+                if (a.source) s[a.source] = true;
+                e[a.environment || 'default'] = true;
+            });
+            sources = Object.keys(s).sort();
+            envs = Object.keys(e).sort();
+        }
+        U.fillSelect(filterSource, sources, state.filterSource, 'All Sources');
+        U.fillSelect(filterEnv, envs, state.filterEnv, 'All Environments');
     }
 
-    function populateEnvironments() {
-        var envs = {};
-        state.alerts.forEach(function (a) {
-            envs[a.environment || 'default'] = true;
-        });
-        var current = state.filterEnv || filterEnv.value;
-        filterEnv.innerHTML = '<option value="">All Environments</option>';
-        Object.keys(envs).sort().forEach(function (e) {
-            var opt = document.createElement('option');
-            opt.value = e;
-            opt.textContent = e;
-            if (e === current) opt.selected = true;
-            filterEnv.appendChild(opt);
-        });
-    }
-
-    function matchesFilters(alert) {
-        if (state.filterSource && (alert.source || '') !== state.filterSource) return false;
-        if (state.filterEnv && (alert.environment || 'default') !== state.filterEnv) return false;
-        if (state.filterSeverity) {
-            var sev = alert.severity || extractSeverity(alert);
-            if (sev !== state.filterSeverity) return false;
-        }
-        if (state.filterStatus) {
-            var isResolved = alert.resolved_at && alert.resolved_at !== '';
-            if (state.filterStatus === 'resolved' && !isResolved) return false;
-            if (state.filterStatus === 'firing' && isResolved) return false;
-        }
-        if (state.searchName) {
-            var term = state.searchName.toLowerCase();
-            var haystack = [
-                alert.alert_fingerprint || '',
-                alert.alert_name || '',
-                alert.source || '',
-                alert.environment || '',
-                alert.text || ''
-            ].join(' ').toLowerCase();
-            if (haystack.indexOf(term) === -1) return false;
-        }
-        return true;
+    function reload() {
+        state.page = 0;
+        loadAlerts();
     }
 
     function formatTime(isoStr) {
@@ -190,16 +179,18 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function renderAlerts() {
-        var filtered = state.alerts.filter(matchesFilters);
+        var filtered = state.alerts.slice();
 
-        // Always sort by timestamp DESC — newest first — regardless of the
-        // order the API returned (pending stubs may be interleaved).
         filtered.sort(function (a, b) {
             var ta = a.cached_at ? Date.parse(a.cached_at) : 0;
             var tb = b.cached_at ? Date.parse(b.cached_at) : 0;
             return tb - ta;
         });
 
+        U.renderPager(alertsPager, state.page, state.total, PAGE_SIZE, function (p) {
+            state.page = p;
+            loadAlerts();
+        });
         if (filtered.length === 0) {
             alertsBody.innerHTML = '<tr><td colspan="9" class="empty-state">No alerts found</td></tr>';
             return;
@@ -247,29 +238,15 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     searchInput.addEventListener('input', function () {
-        state.searchName = this.value;
-        renderAlerts();
+        state.searchName = this.value.trim();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(reload, 300);
     });
 
-    filterSource.addEventListener('change', function () {
-        state.filterSource = this.value;
-        renderAlerts();
-    });
-
-    filterEnv.addEventListener('change', function () {
-        state.filterEnv = this.value;
-        renderAlerts();
-    });
-
-    filterSeverity.addEventListener('change', function () {
-        state.filterSeverity = this.value;
-        renderAlerts();
-    });
-
-    filterStatus.addEventListener('change', function () {
-        state.filterStatus = this.value;
-        renderAlerts();
-    });
+    filterSource.addEventListener('change', function () { state.filterSource = this.value; reload(); });
+    filterEnv.addEventListener('change', function () { state.filterEnv = this.value; reload(); });
+    filterSeverity.addEventListener('change', function () { state.filterSeverity = this.value; reload(); });
+    filterStatus.addEventListener('change', function () { state.filterStatus = this.value; reload(); });
 
     function refresh() {
         loadHealth();
