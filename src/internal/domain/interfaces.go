@@ -164,3 +164,24 @@ type ReviewStore interface {
 	// LatestReview returns the newest review for env ("" = all environments) or nil.
 	LatestReview(ctx context.Context, env string) (*AlertReview, error)
 }
+
+// AlertFilter narrows a cache listing; empty fields match everything.
+type AlertFilter struct {
+	Source      string
+	Environment string // "default" matches alerts received without X-Environment
+	Severity    string
+	Status      string // "firing" or "resolved"
+	Search      string // substring of alert name, fingerprint or analysis text
+}
+
+// AlertFacets lists distinct values available for dashboard filters.
+type AlertFacets struct {
+	Sources      []string `json:"sources"`
+	Environments []string `json:"environments"`
+}
+
+// FilteredLister is an optional Cache capability for server-side filtering and paging.
+type FilteredLister interface {
+	ListFiltered(ctx context.Context, f AlertFilter, limit, offset int) ([]*AnalysisResult, int, error)
+	Facets(ctx context.Context) (*AlertFacets, error)
+}

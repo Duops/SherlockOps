@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -271,19 +272,23 @@ func (c *SQLiteCache) MarkResolved(ctx context.Context, fingerprint string, reso
 	return nil
 }
 
-// List returns recent cache entries ordered by created_at DESC.
-// It returns the matching entries, the total count, and any error.
+// List returns recent cache entries ordered by created_at DESC with the total count.
 func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domain.AnalysisResult, int, error) {
+	return c.ListFiltered(ctx, domain.AlertFilter{}, limit, offset)
+}
+
+// ListFiltered returns entries matching the filter, newest first, with the total match count.
+func (c *SQLiteCache) ListFiltered(ctx context.Context, f domain.AlertFilter, limit int, offset int) ([]*domain.AnalysisResult, int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
+	where, args := buildFilter(f)
 
 	var total int
-	err := c.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM alerts_cache").Scan(&total)
-	if err != nil {
+	if err := c.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM alerts_cache"+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("cache: list count: %w", err)
 	}
 
@@ -292,8 +297,8 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 		        source, severity, alert_name,
 		        model, input_tokens, output_tokens, total_tokens, iterations,
 		        input_token_cost, output_token_cost, tools_trace, environment
-		 FROM alerts_cache ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-		limit, offset,
+		 FROM alerts_cache`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cache: list query: %w", err)
@@ -373,6 +378,72 @@ func (c *SQLiteCache) List(ctx context.Context, limit int, offset int) ([]*domai
 	}
 
 	return results, total, nil
+}
+
+// buildFilter renders an AlertFilter as a SQL WHERE clause with bound args.
+func buildFilter(f domain.AlertFilter) (string, []interface{}) {
+	var conds []string
+	var args []interface{}
+	if f.Source != "" {
+		conds = append(conds, "source = ?")
+		args = append(args, f.Source)
+	}
+	if f.Environment != "" {
+		conds = append(conds, "environment = ?")
+		if f.Environment == defaultEnvName {
+			args = append(args, "")
+		} else {
+			args = append(args, f.Environment)
+		}
+	}
+	if f.Severity != "" {
+		conds = append(conds, "severity = ?")
+		args = append(args, f.Severity)
+	}
+	switch f.Status {
+	case "resolved":
+		conds = append(conds, "resolved_at IS NOT NULL AND resolved_at != ''")
+	case "firing":
+		conds = append(conds, "(resolved_at IS NULL OR resolved_at = '')")
+	}
+	if q := strings.TrimSpace(f.Search); q != "" {
+		like := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(q) + "%"
+		conds = append(conds, `(alert_name LIKE ? ESCAPE '\' OR fingerprint LIKE ? ESCAPE '\' OR analysis_text LIKE ? ESCAPE '\')`)
+		args = append(args, like, like, like)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// Facets returns the distinct sources and environments present in the cache.
+func (c *SQLiteCache) Facets(ctx context.Context) (*domain.AlertFacets, error) {
+	facets := &domain.AlertFacets{Sources: []string{}, Environments: []string{}}
+	rows, err := c.db.QueryContext(ctx, `SELECT DISTINCT source FROM alerts_cache WHERE source != '' ORDER BY source`)
+	if err != nil {
+		return nil, fmt.Errorf("cache: facets sources: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err == nil {
+			facets.Sources = append(facets.Sources, v)
+		}
+	}
+	rows.Close()
+	rows, err = c.db.QueryContext(ctx, `SELECT DISTINCT environment FROM alerts_cache`)
+	if err != nil {
+		return nil, fmt.Errorf("cache: facets environments: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err == nil {
+			facets.Environments = append(facets.Environments, displayEnv(v))
+		}
+	}
+	rows.Close()
+	sort.Strings(facets.Environments)
+	return facets, nil
 }
 
 // Stats returns aggregate statistics about the cache.

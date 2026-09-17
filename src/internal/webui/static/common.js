@@ -186,7 +186,39 @@ window.SherlockUI = (function () {
         return html;
     }
 
+    // renderPager draws "from–to of total" with page buttons into el and calls
+    // onPage(pageIndex) on click. Hidden when everything fits on one page.
+    function renderPager(el, page, total, size, onPage) {
+        var pages = Math.ceil(total / size);
+        if (!el) return;
+        if (pages <= 1) {
+            el.innerHTML = '';
+            el.onclick = null;
+            return;
+        }
+        var from = page * size + 1;
+        var to = Math.min(total, (page + 1) * size);
+        var html = '<span class="pager-info">' + from + '\u2013' + to + ' of ' + total + '</span>';
+        html += '<div class="pager-buttons">';
+        html += '<button type="button" class="btn pager-btn" data-page="' + (page - 1) + '"' + (page === 0 ? ' disabled' : '') + '>\u2039</button>';
+        var start = Math.max(0, Math.min(page - 3, pages - 7));
+        var end = Math.min(pages, start + 7);
+        for (var p = start; p < end; p++) {
+            html += '<button type="button" class="btn pager-btn' + (p === page ? ' active' : '') + '" data-page="' + p + '">' + (p + 1) + '</button>';
+        }
+        html += '<button type="button" class="btn pager-btn" data-page="' + (page + 1) + '"' + (page >= pages - 1 ? ' disabled' : '') + '>\u203a</button>';
+        html += '</div>';
+        el.innerHTML = html;
+        el.onclick = function (e) {
+            var btn = e.target.closest('button[data-page]');
+            if (!btn || btn.disabled) return;
+            var next = parseInt(btn.getAttribute('data-page'), 10);
+            if (next >= 0 && next < pages) onPage(next);
+        };
+    }
+
     return {
+        renderPager: renderPager,
         renderMarkdown: renderMarkdown,
         enhanceSelects: enhanceSelects,
         fetchJSON: fetchJSON,

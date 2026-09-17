@@ -4,7 +4,11 @@ document.addEventListener('DOMContentLoaded', function () {
     var envSelect = document.getElementById('stats-env');
     var topBody = document.getElementById('top-alerts-body');
     var envBody = document.getElementById('by-env-body');
-    var state = { days: '30', env: '', reviewPoll: null };
+    var PAGE_SIZE = 10;
+    var MAX_TOP = 50;
+    var state = { days: '30', env: '', reviewPoll: null, page: 0, top: [], envPage: 0, envs: [], days_n: 30 };
+    var topPager = document.getElementById('top-pager');
+    var envPager = document.getElementById('env-pager');
     var reviewText = document.getElementById('review-text');
     var reviewMeta = document.getElementById('review-meta');
     var reviewError = document.getElementById('review-error');
@@ -38,14 +42,19 @@ document.addEventListener('DOMContentLoaded', function () {
             'unique alerts across ' + envCount + ' environment' + (envCount === 1 ? '' : 's');
     }
 
-    function renderTop(s) {
-        var rows = s.top_alerts || [];
+    function renderTopPage() {
+        var rows = state.top;
         if (rows.length === 0) {
             topBody.innerHTML = '<tr><td colspan="6" class="empty-state">No notifications in this period</td></tr>';
+            topPager.innerHTML = '';
             return;
         }
+        var pages = Math.ceil(rows.length / PAGE_SIZE);
+        if (state.page >= pages) state.page = pages - 1;
+        var start = state.page * PAGE_SIZE;
         var html = '';
-        rows.slice(0, 30).forEach(function (a, i) {
+        rows.slice(start, start + PAGE_SIZE).forEach(function (a, idx) {
+            var i = start + idx;
             var resolvedPct = a.count > 0 ? (a.resolved * 100 / a.count) : 0;
             html += '<tr>';
             html += '<td class="muted">' + (i + 1) + '</td>';
@@ -57,16 +66,33 @@ document.addEventListener('DOMContentLoaded', function () {
             html += '</tr>';
         });
         topBody.innerHTML = html;
+        U.renderPager(topPager, state.page, rows.length, PAGE_SIZE, function (p) { state.page = p; renderTopPage(); });
+    }
+
+    function renderTop(s) {
+        state.top = (s.top_alerts || []).slice(0, MAX_TOP);
+        renderTopPage();
     }
 
     function renderEnvs(s) {
-        var rows = s.by_environment || [];
+        state.envs = s.by_environment || [];
+        state.days_n = s.days || 1;
+        renderEnvPage();
+    }
+
+    function renderEnvPage() {
+        var rows = state.envs;
         if (rows.length === 0) {
             envBody.innerHTML = '<tr><td colspan="6" class="empty-state">No notifications in this period</td></tr>';
+            U.renderPager(envPager, 0, 0, PAGE_SIZE);
             return;
         }
+        var pages = Math.ceil(rows.length / PAGE_SIZE);
+        if (state.envPage >= pages) state.envPage = pages - 1;
+        var start = state.envPage * PAGE_SIZE;
+        var s = { days: state.days_n };
         var html = '';
-        rows.forEach(function (e) {
+        rows.slice(start, start + PAGE_SIZE).forEach(function (e) {
             html += '<tr>';
             html += '<td>' + U.escapeHtml(e.environment) + '</td>';
             html += '<td>' + U.formatInt(e.count) + '</td>';
@@ -77,6 +103,7 @@ document.addEventListener('DOMContentLoaded', function () {
             html += '</tr>';
         });
         envBody.innerHTML = html;
+        U.renderPager(envPager, state.envPage, rows.length, PAGE_SIZE, function (p) { state.envPage = p; renderEnvPage(); });
     }
 
     function load() {
@@ -164,8 +191,8 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    daysSelect.addEventListener('change', function () { state.days = this.value; load(); });
-    envSelect.addEventListener('change', function () { state.env = this.value; load(); loadReview(); });
+    daysSelect.addEventListener('change', function () { state.days = this.value; state.page = 0; state.envPage = 0; load(); });
+    envSelect.addEventListener('change', function () { state.env = this.value; state.page = 0; state.envPage = 0; load(); loadReview(); });
 
     function refresh() { U.loadHealth(); load(); loadReview(); }
     refresh();

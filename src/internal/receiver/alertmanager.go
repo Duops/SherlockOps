@@ -110,7 +110,9 @@ func buildSilenceURL(externalURL string, labels map[string]string) string {
 		matchers = append(matchers, fmt.Sprintf(`%s="%s"`, k, labels[k]))
 	}
 	filter := "{" + strings.Join(matchers, ", ") + "}"
-	return externalURL + "/#/silences/new?filter=" + url.QueryEscape(filter)
+	// The filter lives in the URL fragment, which the Alertmanager UI decodes
+	// with decodeURIComponent: spaces must be %20, not '+'.
+	return externalURL + "/#/silences/new?filter=" + strings.ReplaceAll(url.QueryEscape(filter), "+", "%20")
 }
 
 // GroupAlerts groups alerts by alertname into combined alerts.

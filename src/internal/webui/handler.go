@@ -76,32 +76,59 @@ func (h *Handler) dashboard(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) apiAlerts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	q := r.URL.Query()
 
 	limit := 50
 	offset := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
 			limit = n
 		}
 	}
-	if v := r.URL.Query().Get("offset"); v != "" {
+	if v := q.Get("offset"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			offset = n
 		}
 	}
+	filter := domain.AlertFilter{
+		Source:      clip(q.Get("source")),
+		Environment: clip(q.Get("env")),
+		Severity:    clip(q.Get("severity")),
+		Status:      clip(q.Get("status")),
+		Search:      clip(q.Get("q")),
+	}
 
-	results, total, err := h.cache.List(ctx, limit, offset)
+	var (
+		results []*domain.AnalysisResult
+		total   int
+		err     error
+		facets  *domain.AlertFacets
+	)
+	if fl, ok := h.cache.(domain.FilteredLister); ok {
+		results, total, err = fl.ListFiltered(ctx, filter, limit, offset)
+		if err == nil {
+			if facets, err = fl.Facets(ctx); err != nil {
+				h.logger.Warn("alert facets", "error", err)
+				facets, err = nil, nil
+			}
+		}
+	} else {
+		results, total, err = h.cache.List(ctx, limit, offset)
+		if err == nil {
+			results = filterResults(results, filter)
+		}
+	}
 	if err != nil {
 		h.logger.Error("list alerts", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list alerts"})
 		return
 	}
 
-	// Merge in manual-mode pending alerts (received but not yet analyzed),
-	// deduped by fingerprint against the analyzed cache.
+	// Manual-mode pending alerts are merged into the first page only, deduped
+	// by fingerprint and subject to the same filters.
 	merged := results
 	pendingCount := 0
-	if h.pending != nil {
+	if h.pending != nil && offset == 0 {
 		pendingItems, perr := h.pending.ListPending(ctx, limit)
 		if perr != nil {
 			h.logger.Warn("list pending alerts", "error", perr)
@@ -120,28 +147,83 @@ func (h *Handler) apiAlerts(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				stub := pendingToStub(it)
+				if !matchesFilter(stub, filter) {
+					continue
+				}
 				merged = append(merged, stub)
 				pendingCount++
 			}
 		}
 	}
 
-	// Sort the merged list by timestamp DESC so the dashboard always shows
-	// newest first regardless of where each row came from (analyzed cache or
-	// pending store). cache.List already orders analyzed entries by
-	// created_at DESC, but pending items are appended separately and need
-	// to be interleaved.
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].CachedAt.After(merged[j].CachedAt)
 	})
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"alerts":  toAPIAlerts(merged),
 		"total":   total + pendingCount,
 		"pending": pendingCount,
 		"limit":   limit,
 		"offset":  offset,
-	})
+	}
+	if facets != nil {
+		resp["facets"] = facets
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func clip(v string) string {
+	if len(v) > 128 {
+		return v[:128]
+	}
+	return strings.TrimSpace(v)
+}
+
+// matchesFilter applies an AlertFilter in Go (for pending stubs and caches
+// without server-side filtering).
+func matchesFilter(r *domain.AnalysisResult, f domain.AlertFilter) bool {
+	if r == nil {
+		return false
+	}
+	env := r.Environment
+	if env == "" {
+		env = "default"
+	}
+	if f.Source != "" && r.Source != f.Source {
+		return false
+	}
+	if f.Environment != "" && env != f.Environment {
+		return false
+	}
+	if f.Severity != "" && r.Severity != f.Severity {
+		return false
+	}
+	resolved := r.ResolvedAt != nil
+	if f.Status == "resolved" && !resolved || f.Status == "firing" && resolved {
+		return false
+	}
+	if f.Search != "" {
+		q := strings.ToLower(f.Search)
+		hay := strings.ToLower(r.AlertName + " " + r.AlertFingerprint + " " + r.Text)
+		if !strings.Contains(hay, q) {
+			return false
+		}
+	}
+	return true
+}
+
+func filterResults(rs []*domain.AnalysisResult, f domain.AlertFilter) []*domain.AnalysisResult {
+	if f == (domain.AlertFilter{}) {
+		return rs
+	}
+	out := make([]*domain.AnalysisResult, 0, len(rs))
+	for _, r := range rs {
+		if matchesFilter(r, f) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // apiAlert is the wire shape returned by /ui/api/alerts. It embeds the cached
