@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -169,6 +170,9 @@ func main() {
 		if c, err := httpclient.New(30*time.Second, cfg.MessengerProxy(cfg.Messengers.Slack.ProxyURL)); err == nil {
 			slackMsg.SetHTTPClient(c)
 		}
+		if p := cfg.Messengers.Slack.ListenChannelPattern; p != "" {
+			slackMsg.SetListenChannelPattern(regexp.MustCompile(p))
+		}
 		slackMsg.SetDisplayOptions(displayOpts)
 		messengers = append(messengers, slackMsg)
 		logger.Info("messenger enabled", "name", "slack")
@@ -220,8 +224,10 @@ func main() {
 	startPendingJanitor(ctx, sqliteCache, 30*24*time.Hour, cfg.Stats.RetentionDuration(), logger)
 
 	// 7. Receivers.
+	amReceiver := receiver.NewAlertmanagerReceiver()
+	amReceiver.SetSilenceLabels(cfg.Webhooks.SilenceLabels)
 	receivers := []domain.Receiver{
-		receiver.NewAlertmanagerReceiver(),
+		amReceiver,
 		receiver.NewGrafanaReceiver(),
 		receiver.NewZabbixReceiver(),
 		receiver.NewDatadogReceiver(),
@@ -242,7 +248,15 @@ func main() {
 		}
 	}
 
-	receiverRouter := receiver.NewRouter(cfg.Webhooks.PathPrefix, receivers, webhookHandler, logger)
+	labelTemplates, err := receiver.NewLabelTemplates(cfg.Webhooks.EnvironmentTemplate, cfg.Messengers.Slack.ChannelTemplate)
+	if err != nil {
+		logger.Error("invalid routing template", "error", err)
+		os.Exit(1)
+	}
+	if labelTemplates != nil {
+		logger.Info("label-based routing templates enabled")
+	}
+	receiverRouter := receiver.NewRouterWithTemplates(cfg.Webhooks.PathPrefix, receivers, webhookHandler, labelTemplates, logger)
 
 	// 8. Health checks.
 	healthChecker := health.NewChecker(sqliteCache, messengers, logger)

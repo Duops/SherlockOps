@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -233,8 +234,10 @@ type SlackConfig struct {
 	BotToken       string   `yaml:"bot_token"`
 	AppToken       string   `yaml:"app_token"`
 	SigningSecret  string   `yaml:"signing_secret"`
-	ListenChannels []string `yaml:"listen_channels"`
-	DefaultChannel string   `yaml:"default_channel"`
+	ListenChannels       []string `yaml:"listen_channels"`
+	ListenChannelPattern string   `yaml:"listen_channel_pattern"`
+	DefaultChannel       string   `yaml:"default_channel"`
+	ChannelTemplate      string   `yaml:"channel_template"`
 }
 
 // TelegramConfig holds Telegram messenger settings.
@@ -265,7 +268,9 @@ func (c CacheConfig) TTLDuration() time.Duration {
 
 // WebhooksConfig holds webhook settings.
 type WebhooksConfig struct {
-	PathPrefix string `yaml:"path_prefix"`
+	PathPrefix          string   `yaml:"path_prefix"`
+	SilenceLabels       []string `yaml:"silence_labels"`
+	EnvironmentTemplate string   `yaml:"environment_template"`
 }
 
 // ToolsConfig holds external tool configurations.
@@ -461,6 +466,9 @@ func applyDefaults(cfg *Config) {
 	cfg.Cache.MinLength = 200
 
 	cfg.Webhooks.PathPrefix = "/webhook"
+	cfg.Webhooks.SilenceLabels = []string{
+		"alertname", "namespace", "cluster", "job", "service", "severity",
+	}
 
 	cfg.MCP.Bridge.Port = 8082
 
@@ -603,6 +611,25 @@ func (c *Config) Validate() error {
 	}
 	if _, err := ParseInterval(c.Stats.ReviewInterval); err != nil {
 		errs = append(errs, fmt.Sprintf("stats.review_interval: %v (use e.g. 1d, 1w, 1mo or 72h)", err))
+	}
+	for field, v := range map[string]string{
+		"webhooks.environment_template":     c.Webhooks.EnvironmentTemplate,
+		"messengers.slack.channel_template": c.Messengers.Slack.ChannelTemplate,
+	} {
+		if v == "" {
+			continue
+		}
+		if _, err := template.New(field).Funcs(template.FuncMap{
+			"default": func(string, string) string { return "" }, "lower": strings.ToLower, "upper": strings.ToUpper,
+			"replace": strings.ReplaceAll, "hasPrefix": strings.HasPrefix, "trimPrefix": strings.TrimPrefix,
+		}).Parse(v); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", field, err))
+		}
+	}
+	if p := c.Messengers.Slack.ListenChannelPattern; p != "" {
+		if _, err := regexp.Compile(p); err != nil {
+			errs = append(errs, fmt.Sprintf("messengers.slack.listen_channel_pattern: %v", err))
+		}
 	}
 	for field, v := range c.proxyFields() {
 		if v == "" || v == ProxyDirect {

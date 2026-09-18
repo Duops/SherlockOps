@@ -766,3 +766,68 @@ func TestParseInterval(t *testing.T) {
 		t.Errorf("default review interval = %v, want 1w", cfg.Stats.ReviewIntervalDuration())
 	}
 }
+
+func TestWebhooksSilenceLabels(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Webhooks.SilenceLabels) == 0 || cfg.Webhooks.SilenceLabels[0] != "alertname" {
+		t.Errorf("default silence_labels = %v", cfg.Webhooks.SilenceLabels)
+	}
+	for _, l := range cfg.Webhooks.SilenceLabels {
+		if l == "pod" || l == "instance" {
+			t.Errorf("default silence_labels must not include ephemeral label %q", l)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("webhooks:\n  silence_labels: [alertname, namespace]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if strings.Join(cfg.Webhooks.SilenceLabels, ",") != "alertname,namespace" {
+		t.Errorf("silence_labels from file = %v", cfg.Webhooks.SilenceLabels)
+	}
+}
+
+func TestRoutingTemplatesValidated(t *testing.T) {
+	content := `
+webhooks:
+  environment_template: "{{ .Labels.project }}-{{ .Labels.cluster }}"
+messengers:
+  slack:
+    channel_template: "#tech-alerts-{{ .Labels.project }}"
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Webhooks.EnvironmentTemplate == "" || cfg.Messengers.Slack.ChannelTemplate == "" {
+		t.Error("templates not loaded")
+	}
+
+	if err := os.WriteFile(path, []byte("webhooks:\n  environment_template: \"{{ .Labels.project \"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "webhooks.environment_template") {
+		t.Errorf("expected template validation error, got %v", err)
+	}
+}
+
+func TestSlackListenChannelPatternValidated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("messengers:\n  slack:\n    listen_channel_pattern: \"^tech-alerts-(\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "listen_channel_pattern") {
+		t.Errorf("expected regexp validation error, got %v", err)
+	}
+}
