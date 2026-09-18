@@ -2,11 +2,11 @@ package cache
 
 import (
 	"context"
-	"sort"
-	"strings"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 

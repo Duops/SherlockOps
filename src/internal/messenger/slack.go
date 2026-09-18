@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,9 @@ type SlackMessenger struct {
 	signingSecret  string
 	defaultChannel string
 	listenChannels []string
+	listenPattern  *regexp.Regexp
+	channelNames   map[string]string
+	channelNamesMu sync.Mutex
 	client         *http.Client
 	dialer         *websocket.Dialer
 	handler        func(alert *domain.Alert)
@@ -949,9 +953,14 @@ func (s *SlackMessenger) fetchParentMessage(ctx context.Context, channel, thread
 	return ""
 }
 
-// isListenChannel checks whether the channel is in the listen list.
+// SetListenChannelPattern accepts mentions from any channel whose name matches the pattern.
+func (s *SlackMessenger) SetListenChannelPattern(re *regexp.Regexp) {
+	s.listenPattern = re
+}
+
+// isListenChannel checks the explicit listen list, then the name pattern.
 func (s *SlackMessenger) isListenChannel(channel string) bool {
-	if len(s.listenChannels) == 0 {
+	if len(s.listenChannels) == 0 && s.listenPattern == nil {
 		return true
 	}
 	for _, ch := range s.listenChannels {
@@ -959,7 +968,55 @@ func (s *SlackMessenger) isListenChannel(channel string) bool {
 			return true
 		}
 	}
-	return false
+	if s.listenPattern == nil {
+		return false
+	}
+	name := s.channelName(channel)
+	return name != "" && s.listenPattern.MatchString(name)
+}
+
+func (s *SlackMessenger) channelName(channel string) string {
+	s.channelNamesMu.Lock()
+	if name, ok := s.channelNames[channel]; ok {
+		s.channelNamesMu.Unlock()
+		return name
+	}
+	s.channelNamesMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/conversations.info?channel="+neturl.QueryEscape(channel), nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+s.botToken)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		s.logger.Warn("conversations.info failed", slog.String("channel", channel), slog.String("error", err.Error()))
+		return ""
+	}
+	defer resp.Body.Close()
+	var result struct {
+		OK      bool   `json:"ok"`
+		Error   string `json:"error"`
+		Channel struct {
+			Name string `json:"name"`
+		} `json:"channel"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+	name := result.Channel.Name
+	if !result.OK {
+		s.logger.Debug("conversations.info error", slog.String("channel", channel), slog.String("error", result.Error))
+	}
+	s.channelNamesMu.Lock()
+	if s.channelNames == nil {
+		s.channelNames = make(map[string]string)
+	}
+	s.channelNames[channel] = name
+	s.channelNamesMu.Unlock()
+	return name
 }
 
 // SetHTTPClient routes Web API calls and the Socket Mode WebSocket through the client's proxy.

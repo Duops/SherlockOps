@@ -53,6 +53,12 @@ messengers:
     signing_secret: ""      # env: SLACK_SIGNING_SECRET
     # Listener mode: channels to watch (empty = all channels bot is in)
     listen_channels: []
+    # Also accept mentions from any channel whose name matches this regexp
+    # (resolved via conversations.info and cached), so new channels need no ID here.
+    listen_channel_pattern: ""   # e.g. "^tech-alerts-"
+    # Derive the Slack channel from alert labels when X-Channel-Slack is absent.
+    # Functions: default, lower, upper, replace, hasPrefix, trimPrefix.
+    channel_template: ""     # e.g. "#tech-alerts-{{ .Labels.project }}-{{ .Labels.cluster }}-{{ .Labels.channel | default \"infra\" }}"
     # Webhook mode: default channel to post alerts to
     default_channel: "#alerts"
 
@@ -133,6 +139,9 @@ pipeline:
 # ─── Webhooks ─────────────────────────────────────────────────
 webhooks:
   path_prefix: "/webhook"
+  # Derive the environment from alert labels when X-Environment is absent
+  # (Go template over .Labels/.Annotations/.Name/.Severity/.Status).
+  environment_template: ""   # e.g. "{{ .Labels.project }}-{{ .Labels.cluster }}"
   # Labels kept in the Slack "Silence" link (alertname is always included).
   # Add the labels that identify objects in your alerts (container, host, device,
   # provider_name, ...); ephemeral ones like pod/instance are best left out.

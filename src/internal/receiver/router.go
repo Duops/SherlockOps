@@ -20,6 +20,11 @@ const maxBodySize = 1 << 20
 // (level, format) as the rest of the service. Passing nil falls back to the
 // default global slog logger as a safety net.
 func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain.Alert), logger *slog.Logger) http.Handler {
+	return NewRouterWithTemplates(prefix, receivers, handler, nil, logger)
+}
+
+// NewRouterWithTemplates is NewRouter with label-based environment and channel templates.
+func NewRouterWithTemplates(prefix string, receivers []domain.Receiver, handler func([]domain.Alert), templates *LabelTemplates, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -66,6 +71,8 @@ func NewRouter(prefix string, receivers []domain.Receiver, handler func([]domain
 			// Apply channel routing from headers.
 			applyChannelHeaders(r, alerts)
 
+			templates.Apply(alerts, logger)
+
 			// Group alerts by alertname.
 			alerts = GroupAlerts(alerts)
 
@@ -96,15 +103,8 @@ func applyEnvironmentHeader(r *http.Request, alerts []domain.Alert, logger *slog
 	if env == "" {
 		return
 	}
-	// Validate: only allow safe characters (alphanumeric, hyphens, underscores, dots).
-	for _, c := range env {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-			logger.Warn("rejected invalid X-Environment header", "value", env)
-			return
-		}
-	}
-	if len(env) > 64 {
-		logger.Warn("rejected oversized X-Environment header", "length", len(env))
+	if !validEnvironment(env) {
+		logger.Warn("rejected invalid X-Environment header", "value", env)
 		return
 	}
 	for i := range alerts {
