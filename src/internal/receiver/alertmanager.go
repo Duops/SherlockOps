@@ -14,7 +14,14 @@ import (
 )
 
 // AlertmanagerReceiver parses Alertmanager webhook v4 payloads.
-type AlertmanagerReceiver struct{}
+type AlertmanagerReceiver struct {
+	silenceLabels map[string]bool
+}
+
+// DefaultSilenceLabels are the stable labels kept in the Silence button link.
+var DefaultSilenceLabels = []string{
+	"alertname", "namespace", "cluster", "job", "service", "severity",
+}
 
 type alertmanagerPayload struct {
 	Status      string              `json:"status"`
@@ -34,7 +41,23 @@ type alertmanagerAlert struct {
 }
 
 func NewAlertmanagerReceiver() *AlertmanagerReceiver {
-	return &AlertmanagerReceiver{}
+	return &AlertmanagerReceiver{silenceLabels: silenceLabelSet(DefaultSilenceLabels)}
+}
+
+// SetSilenceLabels restricts the Silence link to these labels; alertname is always kept.
+func (r *AlertmanagerReceiver) SetSilenceLabels(labels []string) {
+	if len(labels) > 0 {
+		r.silenceLabels = silenceLabelSet(labels)
+	}
+}
+
+func silenceLabelSet(labels []string) map[string]bool {
+	set := make(map[string]bool, len(labels)+1)
+	for _, l := range labels {
+		set[l] = true
+	}
+	set["alertname"] = true
+	return set
 }
 
 func (r *AlertmanagerReceiver) Source() string {
@@ -76,7 +99,7 @@ func (r *AlertmanagerReceiver) Parse(_ context.Context, body []byte, _ map[strin
 			annots["generator_url"] = a.GeneratorURL
 		}
 		if payload.ExternalURL != "" {
-			annots["silence_url"] = buildSilenceURL(payload.ExternalURL, a.Labels)
+			annots["silence_url"] = buildSilenceURL(payload.ExternalURL, a.Labels, r.silenceLabels)
 		}
 
 		alerts = append(alerts, domain.Alert{
@@ -98,12 +121,14 @@ func (r *AlertmanagerReceiver) Parse(_ context.Context, body []byte, _ map[strin
 	return alerts, nil
 }
 
-// buildSilenceURL creates an Alertmanager silence creation URL from labels.
-func buildSilenceURL(externalURL string, labels map[string]string) string {
+// buildSilenceURL creates an Alertmanager silence creation URL from the allowed labels (nil = all).
+func buildSilenceURL(externalURL string, labels map[string]string, allow map[string]bool) string {
 	var matchers []string
 	keys := make([]string, 0, len(labels))
 	for k := range labels {
-		keys = append(keys, k)
+		if allow == nil || allow[k] {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {

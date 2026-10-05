@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -917,5 +918,48 @@ func TestSlack_SetHTTPClientPropagatesProxyToWebSocket(t *testing.T) {
 	got, err := s.dialer.Proxy(req)
 	if err != nil || got == nil || got.Host != "proxy.local:8888" {
 		t.Errorf("websocket proxy = %v, %v; want proxy.local:8888", got, err)
+	}
+}
+
+func TestSlackListenChannelPattern(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.info" {
+			http.NotFound(w, r)
+			return
+		}
+		calls++
+		names := map[string]string{"C1": "tech-alerts-pay-prod-app", "C2": "random-chat"}
+		name, ok := names[r.URL.Query().Get("channel")]
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			fmt.Fprint(w, `{"ok":false,"error":"channel_not_found"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"ok":true,"channel":{"id":%q,"name":%q}}`, r.URL.Query().Get("channel"), name)
+	}))
+	defer srv.Close()
+
+	s := NewSlack("xoxb", "xapp", "", "#c", []string{"C111"}, testLogger())
+	s.baseURL = srv.URL
+	s.SetListenChannelPattern(regexp.MustCompile(`^tech-alerts-`))
+
+	if !s.isListenChannel("C111") {
+		t.Error("explicit listen list must still match")
+	}
+	if !s.isListenChannel("C1") {
+		t.Error("channel matching the pattern must be accepted")
+	}
+	if s.isListenChannel("C2") {
+		t.Error("channel not matching the pattern must be rejected")
+	}
+	if s.isListenChannel("C404") {
+		t.Error("unknown channel must be rejected")
+	}
+	before := calls
+	s.isListenChannel("C1")
+	s.isListenChannel("C2")
+	if calls != before {
+		t.Errorf("channel names must be cached, api calls went %d -> %d", before, calls)
 	}
 }
