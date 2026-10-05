@@ -831,3 +831,49 @@ func TestSlackListenChannelPatternValidated(t *testing.T) {
 		t.Errorf("expected regexp validation error, got %v", err)
 	}
 }
+
+func TestLLMTimeoutDuration(t *testing.T) {
+	tests := []struct {
+		timeout string
+		want    time.Duration
+	}{
+		{"300s", 300 * time.Second},
+		{"5m", 5 * time.Minute},
+		{"", 120 * time.Second},
+		{"0s", 120 * time.Second},
+		{"invalid", 120 * time.Second},
+	}
+
+	for _, tt := range tests {
+		c := LLMConfig{Timeout: tt.timeout}
+		if got := c.TimeoutDuration(); got != tt.want {
+			t.Errorf("TimeoutDuration(%q) = %v, want %v", tt.timeout, got, tt.want)
+		}
+	}
+}
+
+func TestLLMTimeoutEnvOverride(t *testing.T) {
+	t.Setenv("LLM_TIMEOUT", "10m")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.TimeoutDuration() != 10*time.Minute {
+		t.Errorf("LLM timeout = %v, want 10m", cfg.LLM.TimeoutDuration())
+	}
+}
+
+func TestValidateLLMTimeout(t *testing.T) {
+	cfg := &Config{}
+	applyDefaults(cfg)
+	cfg.LLM.Timeout = "forever"
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for invalid llm.timeout")
+	}
+	if !contains(err.Error(), "llm.timeout") {
+		t.Errorf("error should mention llm.timeout: %v", err)
+	}
+}

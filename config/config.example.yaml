@@ -17,6 +17,8 @@ llm:
   base_url: ""
   model: "claude-sonnet-4-6"
   max_tokens: 4096
+  # Per-request timeout for LLM API calls (Go duration; env LLM_TIMEOUT). Raise for slow/free models.
+  timeout: "120s"
   # Max tool-calling iterations per analysis (prevents infinite loops)
   max_iterations: 30
   # Custom system prompt (empty = use built-in based on language)

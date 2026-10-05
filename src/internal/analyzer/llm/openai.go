@@ -174,9 +174,13 @@ func convertToOpenAIMessages(systemPrompt string, msgs []domain.Message) []opena
 			result = append(result, msg)
 		case "tool":
 			if m.ToolResult != nil {
+				content := m.ToolResult.Content
+				if content == "" {
+					content = "(empty result)"
+				}
 				result = append(result, openaiMessage{
 					Role:       "tool",
-					Content:    m.ToolResult.Content,
+					Content:    content,
 					ToolCallID: m.ToolResult.CallID,
 				})
 			}

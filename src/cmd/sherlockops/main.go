@@ -76,7 +76,7 @@ func main() {
 	go healthMonitor.Run(ctx)
 
 	// 3. LLM provider.
-	llmClient, err := httpclient.New(120*time.Second, cfg.LLMProxy())
+	llmClient, err := httpclient.New(cfg.LLM.TimeoutDuration(), cfg.LLMProxy())
 	if err != nil {
 		logger.Error("invalid proxy", "error", err)
 		os.Exit(1)

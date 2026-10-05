@@ -316,3 +316,34 @@ func TestNewProvider_Factory(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIProvider_EmptyToolResultHasContent(t *testing.T) {
+	var raw map[string][]map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &raw)
+		json.NewEncoder(w).Encode(openaiResponse{
+			Choices: []openaiChoice{{Message: openaiMessage{Role: "assistant", Content: "Done."}, FinishReason: "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{baseURL: server.URL, model: "m", maxTokens: 10, client: server.Client()}
+	_, err := p.Chat(context.Background(), &domain.ChatRequest{
+		Messages: []domain.Message{
+			{Role: "user", Content: "check pods"},
+			{Role: "assistant", ToolCalls: []domain.ToolCall{{ID: "call-1", Name: "pods_list"}}},
+			{Role: "tool", ToolResult: &domain.ToolResult{CallID: "call-1", Content: ""}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	toolMsg := raw["messages"][2]
+	content, ok := toolMsg["content"].(string)
+	if !ok || content == "" {
+		t.Fatalf("tool message must carry non-empty string content, got %#v", toolMsg["content"])
+	}
+}

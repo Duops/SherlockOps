@@ -171,6 +171,15 @@ type ServerConfig struct {
 	MCPPort int    `yaml:"mcp_port"`
 }
 
+// TimeoutDuration parses the LLM request timeout; invalid, empty or non-positive falls back to 120s.
+func (l LLMConfig) TimeoutDuration() time.Duration {
+	d, err := time.ParseDuration(l.Timeout)
+	if err != nil || d <= 0 {
+		return 120 * time.Second
+	}
+	return d
+}
+
 // LLMConfig holds LLM provider settings.
 type LLMConfig struct {
 	Provider        string  `yaml:"provider"`
@@ -182,6 +191,7 @@ type LLMConfig struct {
 	SystemPrompt    string  `yaml:"system_prompt"`
 	Language        string  `yaml:"language"`
 	ProxyURL        string  `yaml:"proxy_url"`         // overrides proxy.url for the LLM API; "direct" disables
+	Timeout         string  `yaml:"timeout"`           // per-request HTTP timeout (Go duration), default 120s
 	InputTokenCost  float64 `yaml:"input_token_cost"`  // $/1M input tokens (0 = auto-detect from model)
 	OutputTokenCost float64 `yaml:"output_token_cost"` // $/1M output tokens (0 = auto-detect from model)
 	// MaxToolOutputChars caps a single tool result's content before it is
@@ -539,6 +549,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("LLM_BASE_URL"); v != "" {
 		cfg.LLM.BaseURL = v
 	}
+	if v := os.Getenv("LLM_TIMEOUT"); v != "" {
+		cfg.LLM.Timeout = v
+	}
 	if v := os.Getenv("SLACK_BOT_TOKEN"); v != "" {
 		cfg.Messengers.Slack.BotToken = v
 	}
@@ -597,6 +610,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Sprintf("pipeline.mode must be one of: auto, manual; got %q", c.Pipeline.Mode))
 	}
 
+	if c.LLM.Timeout != "" {
+		if _, err := time.ParseDuration(c.LLM.Timeout); err != nil {
+			errs = append(errs, fmt.Sprintf("llm.timeout is not a valid duration: %v", err))
+		}
+	}
 	if _, err := time.ParseDuration(c.Cache.TTL); err != nil {
 		errs = append(errs, fmt.Sprintf("cache.ttl is not a valid duration: %v", err))
 	}
