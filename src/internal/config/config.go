@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -170,6 +171,15 @@ type ServerConfig struct {
 	MCPPort int    `yaml:"mcp_port"`
 }
 
+// TimeoutDuration parses the LLM request timeout; invalid, empty or non-positive falls back to 120s.
+func (l LLMConfig) TimeoutDuration() time.Duration {
+	d, err := time.ParseDuration(l.Timeout)
+	if err != nil || d <= 0 {
+		return 120 * time.Second
+	}
+	return d
+}
+
 // LLMConfig holds LLM provider settings.
 type LLMConfig struct {
 	Provider        string  `yaml:"provider"`
@@ -181,6 +191,7 @@ type LLMConfig struct {
 	SystemPrompt    string  `yaml:"system_prompt"`
 	Language        string  `yaml:"language"`
 	ProxyURL        string  `yaml:"proxy_url"`         // overrides proxy.url for the LLM API; "direct" disables
+	Timeout         string  `yaml:"timeout"`           // per-request HTTP timeout (Go duration), default 120s
 	InputTokenCost  float64 `yaml:"input_token_cost"`  // $/1M input tokens (0 = auto-detect from model)
 	OutputTokenCost float64 `yaml:"output_token_cost"` // $/1M output tokens (0 = auto-detect from model)
 	// MaxToolOutputChars caps a single tool result's content before it is
@@ -233,8 +244,10 @@ type SlackConfig struct {
 	BotToken       string   `yaml:"bot_token"`
 	AppToken       string   `yaml:"app_token"`
 	SigningSecret  string   `yaml:"signing_secret"`
-	ListenChannels []string `yaml:"listen_channels"`
-	DefaultChannel string   `yaml:"default_channel"`
+	ListenChannels       []string `yaml:"listen_channels"`
+	ListenChannelPattern string   `yaml:"listen_channel_pattern"`
+	DefaultChannel       string   `yaml:"default_channel"`
+	ChannelTemplate      string   `yaml:"channel_template"`
 }
 
 // TelegramConfig holds Telegram messenger settings.
@@ -265,7 +278,9 @@ func (c CacheConfig) TTLDuration() time.Duration {
 
 // WebhooksConfig holds webhook settings.
 type WebhooksConfig struct {
-	PathPrefix string `yaml:"path_prefix"`
+	PathPrefix          string   `yaml:"path_prefix"`
+	SilenceLabels       []string `yaml:"silence_labels"`
+	EnvironmentTemplate string   `yaml:"environment_template"`
 }
 
 // ToolsConfig holds external tool configurations.
@@ -461,6 +476,9 @@ func applyDefaults(cfg *Config) {
 	cfg.Cache.MinLength = 200
 
 	cfg.Webhooks.PathPrefix = "/webhook"
+	cfg.Webhooks.SilenceLabels = []string{
+		"alertname", "namespace", "cluster", "job", "service", "severity",
+	}
 
 	cfg.MCP.Bridge.Port = 8082
 
@@ -531,6 +549,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("LLM_BASE_URL"); v != "" {
 		cfg.LLM.BaseURL = v
 	}
+	if v := os.Getenv("LLM_TIMEOUT"); v != "" {
+		cfg.LLM.Timeout = v
+	}
 	if v := os.Getenv("SLACK_BOT_TOKEN"); v != "" {
 		cfg.Messengers.Slack.BotToken = v
 	}
@@ -589,6 +610,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Sprintf("pipeline.mode must be one of: auto, manual; got %q", c.Pipeline.Mode))
 	}
 
+	if c.LLM.Timeout != "" {
+		if _, err := time.ParseDuration(c.LLM.Timeout); err != nil {
+			errs = append(errs, fmt.Sprintf("llm.timeout is not a valid duration: %v", err))
+		}
+	}
 	if _, err := time.ParseDuration(c.Cache.TTL); err != nil {
 		errs = append(errs, fmt.Sprintf("cache.ttl is not a valid duration: %v", err))
 	}
@@ -603,6 +629,25 @@ func (c *Config) Validate() error {
 	}
 	if _, err := ParseInterval(c.Stats.ReviewInterval); err != nil {
 		errs = append(errs, fmt.Sprintf("stats.review_interval: %v (use e.g. 1d, 1w, 1mo or 72h)", err))
+	}
+	for field, v := range map[string]string{
+		"webhooks.environment_template":     c.Webhooks.EnvironmentTemplate,
+		"messengers.slack.channel_template": c.Messengers.Slack.ChannelTemplate,
+	} {
+		if v == "" {
+			continue
+		}
+		if _, err := template.New(field).Funcs(template.FuncMap{
+			"default": func(string, string) string { return "" }, "lower": strings.ToLower, "upper": strings.ToUpper,
+			"replace": strings.ReplaceAll, "hasPrefix": strings.HasPrefix, "trimPrefix": strings.TrimPrefix,
+		}).Parse(v); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", field, err))
+		}
+	}
+	if p := c.Messengers.Slack.ListenChannelPattern; p != "" {
+		if _, err := regexp.Compile(p); err != nil {
+			errs = append(errs, fmt.Sprintf("messengers.slack.listen_channel_pattern: %v", err))
+		}
 	}
 	for field, v := range c.proxyFields() {
 		if v == "" || v == ProxyDirect {

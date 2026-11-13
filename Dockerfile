@@ -1,11 +1,13 @@
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /app
 COPY src/go.mod src/go.sum ./
 RUN go mod download
 COPY src/ ./
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build \
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X github.com/Duops/SherlockOps/internal/version.Version=${VERSION}" \
     -o /sherlockops ./cmd/sherlockops
 
